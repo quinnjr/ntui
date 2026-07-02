@@ -5,6 +5,11 @@ use crate::element::Element;
 use crate::error::Error;
 use crate::runtime::AppCore;
 
+/// Budget of cooperative yields so hook-spawned tokio tasks (later tasks) get
+/// scheduled on the current-thread runtime before we drain wakes. Revisit if
+/// async chains need more hops.
+const TASK_YIELD_BUDGET: usize = 8;
+
 pub struct TestTerminal {
     core: AppCore,
     backend: TestBackend,
@@ -23,7 +28,7 @@ impl TestTerminal {
 
     /// Yield so hook-spawned tasks can run, then process wakes and redraw.
     pub async fn tick(&mut self) -> Result<(), Error> {
-        for _ in 0..8 {
+        for _ in 0..TASK_YIELD_BUDGET {
             tokio::task::yield_now().await;
         }
         self.core.process_wakes();
@@ -75,5 +80,33 @@ mod tests {
     async fn mount_effects_and_wakes_are_processed_before_first_frame() {
         let t = TestTerminal::new(10, 1, Element::component::<Boot>(BootProps)).unwrap();
         assert!(t.frame_text().contains("n=1"));
+    }
+
+    struct NeverConverges;
+    #[derive(Clone, PartialEq, Default)]
+    struct NeverConvergesProps;
+    impl Component for NeverConverges {
+        type Props = NeverConvergesProps;
+        fn render(_: &NeverConvergesProps, hooks: &mut Hooks) -> Element {
+            let n = hooks.use_state(|| 0);
+            let n2 = n.clone();
+            // deps change every pass, so this effect fires again every pass,
+            // which dirties state again every pass: a non-converging fixpoint.
+            hooks.use_effect(n.get(), move || n2.update(|v| *v += 1));
+            Element::text(TextProps {
+                content: format!("n={}", n.get()),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    #[should_panic(expected = "maximum update depth")]
+    async fn process_wakes_panics_on_non_converging_fixpoint() {
+        let _ = TestTerminal::new(
+            10,
+            1,
+            Element::component::<NeverConverges>(NeverConvergesProps),
+        );
     }
 }

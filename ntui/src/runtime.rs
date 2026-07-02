@@ -11,6 +11,11 @@ use crate::hooks::{RuntimeHandle, Wake};
 use crate::layout::compute_layout;
 use crate::paint::paint;
 
+/// Cap on outer `process_wakes` fixpoint passes. Mirrors React's
+/// "maximum update depth exceeded" guard: a component whose effect
+/// re-dirties state on every pass would otherwise spin the loop forever.
+const MAX_UPDATE_PASSES: usize = 64;
+
 /// The engine loop's shared core. `render()` drives it with a select loop;
 /// `testing::TestTerminal` drives it by hand for deterministic tests.
 pub(crate) struct AppCore {
@@ -55,7 +60,14 @@ impl AppCore {
             self.apply_wake(w);
         }
         // Loop: effects may set state synchronously.
+        let mut passes = 0;
         while !self.pending.is_empty() {
+            passes += 1;
+            if passes > MAX_UPDATE_PASSES {
+                panic!(
+                    "ntui: maximum update depth exceeded ({MAX_UPDATE_PASSES} passes) — a use_effect that sets state unconditionally, or a state update during every render, is preventing the UI from reaching a stable state"
+                );
+            }
             let mut dirty = std::mem::take(&mut self.pending);
             let mut seen = HashSet::new();
             dirty.retain(|id| seen.insert(*id));
@@ -115,6 +127,10 @@ impl AppCore {
         self.size = (w, h);
         self.tree.layout_dirty = true;
         self.prev = None; // full repaint
+        // Pushing the root as dirty is forward-looking for the upcoming
+        // use_terminal_size hook (not yet implemented). The caller must
+        // invoke process_wakes() after resize() to actually apply this;
+        // TestTerminal::resize does, and the future render loop must too.
         if let Some(root) = self.tree.root {
             self.pending.push(root);
         }
