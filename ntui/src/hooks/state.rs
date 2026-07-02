@@ -7,6 +7,8 @@ use crate::hooks::{HookSlot, Hooks, Wake};
 
 /// Owned component state. Clonable and Send (if T: Send) so it can be moved
 /// into hook-spawned tasks; setting it marks the owning fiber dirty.
+/// Locking recovers from poisoning: a panicking `update` closure cannot
+/// permanently brick the cell.
 pub struct State<T> {
     inner: Arc<Mutex<T>>,
     fiber: FiberId,
@@ -25,18 +27,27 @@ impl<T> Clone for State<T> {
 
 impl<T: 'static> State<T> {
     pub fn set(&self, value: T) {
-        *self.inner.lock().unwrap() = value;
+        *self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
         let _ = self.wake.send(Wake::Dirty(self.fiber));
     }
     pub fn update(&self, f: impl FnOnce(&mut T)) {
-        f(&mut self.inner.lock().unwrap());
+        f(&mut self
+            .inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner));
         let _ = self.wake.send(Wake::Dirty(self.fiber));
     }
 }
 
 impl<T: Clone + 'static> State<T> {
     pub fn get(&self) -> T {
-        self.inner.lock().unwrap().clone()
+        self.inner
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone()
     }
 }
 
