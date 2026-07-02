@@ -12,12 +12,17 @@ use crate::runtime::AppCore;
 /// async chains need more hops.
 const TASK_YIELD_BUDGET: usize = 8;
 
+/// A headless terminal that drives an ntui component tree frame by frame,
+/// for use in tests. Mirrors what [`crate::render`] does against a real
+/// terminal, but under manual control and without crossterm I/O.
 pub struct TestTerminal {
     core: AppCore,
     backend: TestBackend,
 }
 
 impl TestTerminal {
+    /// Mounts `el` at `width` x `height`, processes any mount-time wakes,
+    /// and renders the first frame.
     pub fn new(width: u16, height: u16, el: Element) -> Result<Self, Error> {
         let mut t = TestTerminal {
             core: AppCore::new(el, (width, height)),
@@ -37,6 +42,8 @@ impl TestTerminal {
         self.core.draw(&mut self.backend)
     }
 
+    /// Resizes the virtual terminal and redraws a full frame at the new
+    /// size.
     pub fn resize(&mut self, width: u16, height: u16) -> Result<(), Error> {
         self.backend = TestBackend::new(width, height);
         self.core.resize(width, height);
@@ -49,14 +56,18 @@ impl TestTerminal {
         self.backend.to_text()
     }
 
+    /// Whether the app has called `use_app().exit()`.
     pub fn exited(&self) -> bool {
         self.core.exited
     }
 
+    /// Sends a key press with no modifiers and redraws.
     pub fn send_key(&mut self, code: KeyCode) -> Result<(), Error> {
         self.send_key_event(KeyEvent::new(code, KeyModifiers::NONE))
     }
 
+    /// Dispatches a key event through mounted `use_input` handlers, applies
+    /// any resulting wakes, and redraws.
     pub fn send_key_event(&mut self, ev: KeyEvent) -> Result<(), Error> {
         self.core.dispatch_key(ev);
         self.core.process_wakes();

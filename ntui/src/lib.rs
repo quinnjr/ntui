@@ -1,4 +1,41 @@
-// modules are added task by task
+//! `ntui` is an [Ink](https://github.com/vadimdemedes/ink)-style library for building
+//! terminal UIs in Rust out of declarative components and hooks. Layouts are described
+//! with `View`/`Text` elements (often via the [`element!`] macro) and arranged with a
+//! flexbox model powered by [`taffy`]; components re-render in response to state and
+//! effect hooks, similar to React. `render` drives the component tree fullscreen against
+//! the real terminal using `crossterm`, while [`testing::TestTerminal`] drives the same
+//! tree headlessly for tests.
+//!
+//! ```no_run
+//! use ntui::{component, element, render};
+//!
+//! #[component]
+//! fn Counter(hooks: &mut ntui::Hooks) -> ntui::Element {
+//!     let count = hooks.use_state(|| 0i32);
+//!     element! {
+//!         View(padding: 1) {
+//!             Text(content: format!("count: {}", count.get()))
+//!         }
+//!     }
+//! }
+//!
+//! #[tokio::main(flavor = "current_thread")]
+//! async fn main() -> Result<(), ntui::Error> {
+//!     render(element!(Counter)).await
+//! }
+//! ```
+//!
+//! Core types:
+//! - [`Element`] / [`Node`]: the tree of views, text, fragments, and components built
+//!   each render, typically via [`element!`].
+//! - [`Component`]: the trait implemented (usually via `#[component]`) to render props
+//!   and hooks into an [`Element`].
+//! - [`Hooks`]: per-fiber hook state, exposing `use_state`, `use_effect`, `use_input`,
+//!   and friends during a component's render.
+//! - [`render`]: runs a component tree fullscreen against the real terminal until the
+//!   app exits.
+//! - [`testing::TestTerminal`]: drives a component tree headlessly, frame by frame, for
+//!   deterministic tests.
 pub mod backend;
 pub mod buffer;
 pub mod component;

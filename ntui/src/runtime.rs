@@ -170,7 +170,8 @@ impl AppCore {
         // Push the root as dirty so components reading use_terminal_size()
         // re-render with the new size. The caller must invoke
         // process_wakes() after resize() to actually apply this;
-        // TestTerminal::resize does, and the future render loop must too.
+        // TestTerminal::resize does, and so does the render() loop, which
+        // calls process_wakes() on its next iteration after Event::Resize.
         if let Some(root) = self.tree.root {
             self.pending.push(root);
         }

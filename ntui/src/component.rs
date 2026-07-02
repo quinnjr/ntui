@@ -3,8 +3,15 @@ use std::any::{Any, TypeId};
 use crate::element::Element;
 use crate::hooks::Hooks;
 
+/// A UI component: a pure function from `Props` and hook state to an
+/// [`Element`] tree. Usually implemented via the `#[component]` attribute
+/// macro rather than by hand.
 pub trait Component: 'static {
+    /// Input data for this component. Compared by value between renders to
+    /// decide whether the component's subtree needs updating.
     type Props: Clone + PartialEq + Default + 'static;
+    /// Produces this component's output tree for the current `props`,
+    /// reading and updating hook state via `hooks`.
     fn render(props: &Self::Props, hooks: &mut Hooks) -> Element;
 }
 

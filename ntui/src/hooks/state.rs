@@ -26,6 +26,8 @@ impl<T> Clone for State<T> {
 }
 
 impl<T: 'static> State<T> {
+    /// Replaces the stored value and marks the owning fiber dirty for
+    /// re-render.
     pub fn set(&self, value: T) {
         *self
             .inner
@@ -33,6 +35,8 @@ impl<T: 'static> State<T> {
             .unwrap_or_else(std::sync::PoisonError::into_inner) = value;
         let _ = self.wake.send(Wake::Dirty(self.fiber));
     }
+    /// Mutates the stored value in place via `f` and marks the owning fiber
+    /// dirty for re-render.
     pub fn update(&self, f: impl FnOnce(&mut T)) {
         f(&mut self
             .inner
@@ -43,6 +47,7 @@ impl<T: 'static> State<T> {
 }
 
 impl<T: Clone + 'static> State<T> {
+    /// Returns a clone of the current value.
     pub fn get(&self) -> T {
         self.inner
             .lock()
@@ -52,6 +57,9 @@ impl<T: Clone + 'static> State<T> {
 }
 
 impl<'a> Hooks<'a> {
+    /// Persists a value across renders in a per-fiber slot, running `init`
+    /// only on the first render. Returns a [`State`] handle for reading and
+    /// updating it; must be called in the same order on every render.
     pub fn use_state<T: 'static>(&mut self, init: impl FnOnce() -> T) -> State<T> {
         let fiber = self.fiber_id;
         let wake = self.runtime.wake.clone();

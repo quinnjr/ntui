@@ -25,6 +25,10 @@ pub(crate) struct EffectSlot {
 }
 
 impl<'a> Hooks<'a> {
+    /// Schedules `effect` to run after commit whenever `deps` changes
+    /// (compared to the previous render), including on first mount. If the
+    /// previous run returned a cleanup, it runs before the new invocation
+    /// and on unmount.
     pub fn use_effect<D, C>(&mut self, deps: D, effect: impl FnOnce() -> C + 'static)
     where
         D: PartialEq + 'static,

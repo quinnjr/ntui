@@ -4,11 +4,16 @@ use std::rc::Rc;
 use crate::component::{AnyComponent, Component, TypedComponent};
 use crate::props::{TextProps, ViewProps};
 
+/// A node in the tree produced by a component's `render`, plus an optional
+/// reconciliation key. Cheap to build each render; typically constructed via
+/// the [`crate::element!`] macro rather than these constructors directly.
 pub struct Element {
     pub key: Option<String>,
     pub node: Node,
 }
 
+/// The kind of tree node an [`Element`] wraps: a layout box, a text run, a
+/// grouping fragment, a context provider, or a nested component.
 pub enum Node {
     View {
         props: ViewProps,
@@ -29,24 +34,30 @@ pub enum Node {
 }
 
 impl Element {
+    /// A flexbox layout box with the given style and child elements.
     pub fn view(props: ViewProps, children: Vec<Element>) -> Self {
         Element {
             key: None,
             node: Node::View { props, children },
         }
     }
+    /// A leaf run of styled text.
     pub fn text(props: TextProps) -> Self {
         Element {
             key: None,
             node: Node::Text { props },
         }
     }
+    /// A childless-in-layout grouping of elements; does not introduce a box
+    /// of its own.
     pub fn fragment(children: Vec<Element>) -> Self {
         Element {
             key: None,
             node: Node::Fragment { children },
         }
     }
+    /// Makes `value` available to descendant components via context, scoped
+    /// to `children`.
     pub fn provider<T: 'static>(value: T, children: Vec<Element>) -> Self {
         Element {
             key: None,
@@ -57,12 +68,16 @@ impl Element {
             },
         }
     }
+    /// A nested component instance, rendered with `props` on its own fiber.
     pub fn component<C: Component>(props: C::Props) -> Self {
         Element {
             key: None,
             node: Node::Component(Box::new(TypedComponent::<C>::new(props))),
         }
     }
+    /// Sets a stable reconciliation key, used to match this element to the
+    /// same fiber across renders when sibling order can change (e.g. list
+    /// items).
     pub fn with_key(mut self, key: impl Into<String>) -> Self {
         self.key = Some(key.into());
         self

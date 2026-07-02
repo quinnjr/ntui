@@ -5,11 +5,15 @@ pub use crossterm::event::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 
 use crate::hooks::{HookSlot, Hooks};
 
+/// Passed to `use_input` handlers alongside each key event, letting a
+/// handler stop the event from reaching ancestor handlers.
 pub struct InputCtx {
     pub(crate) stopped: bool,
 }
 
 impl InputCtx {
+    /// Prevents this key event from bubbling to handlers further up the
+    /// tree (dispatch is deepest-first).
     pub fn stop_propagation(&mut self) {
         self.stopped = true;
     }
