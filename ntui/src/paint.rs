@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 use crate::buffer::{Buffer, Cell};
 use crate::fiber::{FiberId, FiberKind, FiberTree, Rect};
 use crate::props::TextWrap;

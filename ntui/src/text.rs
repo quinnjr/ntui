@@ -1,5 +1,3 @@
-#![allow(dead_code)]
-
 /// v1 limitation: width is measured as 1 column per `char`.
 pub(crate) fn wrap_text(content: &str, max_width: usize) -> Vec<String> {
     let max_width = max_width.max(1);

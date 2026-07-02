@@ -3,13 +3,25 @@ pub mod backend;
 pub mod buffer;
 pub mod component;
 pub mod element;
+pub mod error;
 pub(crate) mod fiber;
 pub mod hooks;
 pub(crate) mod layout;
 pub(crate) mod paint;
 pub mod props;
 pub(crate) mod reconciler;
+pub(crate) mod runtime;
 pub mod style;
 #[cfg(test)]
 pub(crate) mod test_util;
+pub mod testing;
 pub(crate) mod text;
+
+pub use component::Component;
+pub use element::{Element, Node};
+pub use error::Error;
+pub use hooks::Hooks;
+pub use hooks::effect::Cleanup;
+pub use hooks::state::State;
+pub use props::{Dimension, FlexDirection, TextProps, TextWrap, ViewProps};
+pub use style::{Attrs, BorderStyle, Color, Weight};

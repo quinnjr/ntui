@@ -1,7 +1,3 @@
-// The fiber tree is only driven end-to-end once the runtime (later tasks)
-// exists; until then several items here are only exercised by unit tests.
-#![allow(dead_code)]
-
 use std::any::TypeId;
 use std::collections::HashMap;
 use std::rc::Rc;
@@ -73,10 +69,14 @@ impl FiberTree {
     pub fn contains(&self, id: FiberId) -> bool {
         self.fibers.contains_key(&id)
     }
+    // Used by unit tests only until later tasks (e.g. devtools/debug output) consume it.
+    #[allow(dead_code)]
     pub fn len(&self) -> usize {
         self.fibers.len()
     }
 
+    // Used by unit tests only until later tasks (e.g. devtools/debug output) consume it.
+    #[allow(dead_code)]
     pub fn kind_name(&self, id: FiberId) -> &'static str {
         match self.get(id).kind {
             FiberKind::View(_) => "View",

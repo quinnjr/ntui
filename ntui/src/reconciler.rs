@@ -1,6 +1,3 @@
-// Wired into the runtime in a later task; unused-outside-tests until then.
-#![allow(dead_code)]
-
 use crate::element::Element;
 use crate::fiber::{FiberId, FiberKind, FiberTree};
 use crate::hooks::{Hooks, RuntimeHandle};

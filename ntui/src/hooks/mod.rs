@@ -1,7 +1,3 @@
-// Hook plumbing is wired end-to-end once the runtime (later tasks) drives the
-// fiber tree; until then several items here are only exercised by unit tests.
-#![allow(dead_code)]
-
 use crate::fiber::FiberId;
 
 pub mod effect;
@@ -29,6 +25,8 @@ impl HookSlot {
 #[derive(Debug)]
 pub(crate) enum Wake {
     Dirty(FiberId),
+    // Constructed once the render()/event-loop task wires Ctrl+C and app.exit().
+    #[allow(dead_code)]
     Exit,
 }
 
