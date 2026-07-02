@@ -39,6 +39,9 @@ fn push_word(lines: &mut Vec<String>, line: &mut String, word: &str, max: usize)
 }
 
 pub(crate) fn truncate_line(content: &str, max_width: usize) -> String {
+    if max_width == 0 {
+        return String::new();
+    }
     let first = content.split('\n').next().unwrap_or("");
     let chars: Vec<char> = first.chars().collect();
     if chars.len() <= max_width {

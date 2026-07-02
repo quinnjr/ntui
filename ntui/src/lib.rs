@@ -6,6 +6,7 @@ pub mod element;
 pub(crate) mod fiber;
 pub mod hooks;
 pub(crate) mod layout;
+pub(crate) mod paint;
 pub mod props;
 pub(crate) mod reconciler;
 pub mod style;
