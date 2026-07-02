@@ -4,10 +4,12 @@
 
 use crate::fiber::FiberId;
 
+pub mod effect;
 pub mod state;
 
 pub(crate) enum HookSlot {
     State(Box<dyn std::any::Any>), // holds a State<T>
+    Effect(effect::EffectSlot),
 }
 
 impl HookSlot {
@@ -15,6 +17,11 @@ impl HookSlot {
     pub(crate) fn unmount(self) {
         match self {
             HookSlot::State(_) => {}
+            HookSlot::Effect(mut e) => {
+                if let Some(c) = e.cleanup.take() {
+                    c();
+                }
+            }
         }
     }
 }

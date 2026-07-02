@@ -156,6 +156,35 @@ impl FiberTree {
         }
         self.layout_dirty = true;
     }
+
+    /// Run pending effects depth-first (parents before children), running the
+    /// previous cleanup before each rerun. Called after each commit.
+    pub(crate) fn flush_effects(&mut self) {
+        let Some(root) = self.root else { return };
+        let mut order = Vec::new();
+        self.collect_dfs(root, &mut order);
+        for id in order {
+            let mut slots = std::mem::take(&mut self.get_mut(id).hooks);
+            for slot in &mut slots {
+                if let crate::hooks::HookSlot::Effect(e) = slot
+                    && let Some(pending) = e.pending.take()
+                {
+                    if let Some(cleanup) = e.cleanup.take() {
+                        cleanup();
+                    }
+                    e.cleanup = pending().0;
+                }
+            }
+            self.get_mut(id).hooks = slots;
+        }
+    }
+
+    fn collect_dfs(&self, id: FiberId, out: &mut Vec<FiberId>) {
+        out.push(id);
+        for c in &self.get(id).children {
+            self.collect_dfs(*c, out);
+        }
+    }
 }
 
 #[cfg(test)]

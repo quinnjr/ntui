@@ -63,12 +63,6 @@ impl<'a> Hooks<'a> {
                 wake,
             }))
         });
-        // `#[allow(irrefutable_let_patterns)]`: `HookSlot` has only the
-        // `State` variant so far, so this pattern always matches today. It
-        // becomes genuinely refutable once more hook variants land (Task
-        // 8+), which is why `hook_mismatch` returns `!` rather than being
-        // dropped now.
-        #[allow(irrefutable_let_patterns)]
         let HookSlot::State(any) = slot else {
             self.hook_mismatch("use_state")
         };
