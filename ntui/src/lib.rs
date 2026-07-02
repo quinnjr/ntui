@@ -1,4 +1,8 @@
 // modules are added task by task
 pub mod backend;
 pub mod buffer;
+pub mod component;
+pub mod element;
+pub mod hooks;
+pub mod props;
 pub mod style;
