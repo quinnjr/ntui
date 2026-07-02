@@ -1,4 +1,4 @@
-use std::io::{self, Stdout, Write};
+use std::io::{self, BufWriter, Stdout, Write};
 
 use crossterm::{cursor, execute, queue, style, terminal};
 
@@ -10,12 +10,14 @@ use crate::style::Color;
 /// v1 emits one MoveTo+style+Print per changed cell; batching styled runs is a
 /// later optimization.
 pub struct FullscreenBackend {
-    out: Stdout,
+    out: BufWriter<Stdout>,
 }
 
 impl FullscreenBackend {
     pub fn new() -> Self {
-        FullscreenBackend { out: io::stdout() }
+        FullscreenBackend {
+            out: BufWriter::new(io::stdout()),
+        }
     }
 }
 
@@ -92,5 +94,29 @@ impl Backend for FullscreenBackend {
             )?;
         }
         self.out.flush()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn to_ct_maps_every_color_variant() {
+        assert_eq!(to_ct(Color::Reset), style::Color::Reset);
+        assert_eq!(to_ct(Color::Black), style::Color::Black);
+        assert_eq!(to_ct(Color::Red), style::Color::Red);
+        assert_eq!(to_ct(Color::Green), style::Color::Green);
+        assert_eq!(to_ct(Color::Yellow), style::Color::Yellow);
+        assert_eq!(to_ct(Color::Blue), style::Color::Blue);
+        assert_eq!(to_ct(Color::Magenta), style::Color::Magenta);
+        assert_eq!(to_ct(Color::Cyan), style::Color::Cyan);
+        assert_eq!(to_ct(Color::White), style::Color::White);
+        assert_eq!(to_ct(Color::DarkGrey), style::Color::DarkGrey);
+        assert_eq!(
+            to_ct(Color::Rgb(1, 2, 3)),
+            style::Color::Rgb { r: 1, g: 2, b: 3 }
+        );
+        assert_eq!(to_ct(Color::Ansi(42)), style::Color::AnsiValue(42));
     }
 }
