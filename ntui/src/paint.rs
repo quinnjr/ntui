@@ -53,7 +53,7 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer) {
             };
             for (dy, line) in lines.iter().take(r.height as usize).enumerate() {
                 for (dx, ch) in line.chars().take(r.width as usize).enumerate() {
-                    let (x, y) = (r.x + dx as u16, r.y + dy as u16);
+                    let (x, y) = (r.x.saturating_add(dx as u16), r.y.saturating_add(dy as u16));
                     // keep the background an ancestor View already painted
                     let bg = if x < buf.width() && y < buf.height() {
                         buf.get(x, y).bg
@@ -92,7 +92,10 @@ fn border_chars(style: BorderStyle) -> [char; 6] {
 
 fn draw_border(buf: &mut Buffer, r: Rect, style: BorderStyle, color: Color, bg: Color) {
     let [h, v, tl, tr, bl, br] = border_chars(style);
-    let (x2, y2) = (r.x + r.width - 1, r.y + r.height - 1);
+    let (x2, y2) = (
+        r.x.saturating_add(r.width - 1),
+        r.y.saturating_add(r.height - 1),
+    );
     let cell = |ch| Cell {
         ch,
         fg: color,
@@ -195,5 +198,52 @@ mod tests {
         let cell = buf.get(0, 0);
         assert_eq!(cell.fg, Color::Yellow);
         assert!(cell.attrs.bold);
+    }
+
+    #[test]
+    fn view_background_fills_cells() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::view(
+                ViewProps {
+                    background: Color::Blue,
+                    width: Dimension::Cells(3),
+                    height: Dimension::Cells(3),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 3, 3);
+        let mut buf = Buffer::new(3, 3);
+        paint(&tree, &mut buf);
+        assert_eq!(buf.get(1, 1).bg, Color::Blue);
+    }
+
+    #[test]
+    fn border_color_lands_on_border_cells() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::view(
+                ViewProps {
+                    border_style: BorderStyle::Single,
+                    border_color: Color::Red,
+                    width: Dimension::Cells(3),
+                    height: Dimension::Cells(3),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 3, 3);
+        let mut buf = Buffer::new(3, 3);
+        paint(&tree, &mut buf);
+        let cell = buf.get(0, 0);
+        assert_eq!(cell.fg, Color::Red);
+        assert_eq!(cell.ch, '┌');
     }
 }
