@@ -1,6 +1,7 @@
 use crate::fiber::FiberId;
 
 pub mod app;
+pub mod context;
 pub mod effect;
 pub mod input;
 pub mod state;
@@ -64,6 +65,7 @@ pub struct Hooks<'a> {
     pub(crate) fiber_id: FiberId,
     pub(crate) runtime: RuntimeHandle,
     pub(crate) first_render: bool,
+    pub(crate) context: std::rc::Rc<crate::fiber::ContextMap>,
 }
 
 impl<'a> Hooks<'a> {
@@ -73,6 +75,7 @@ impl<'a> Hooks<'a> {
         fiber_id: FiberId,
         runtime: RuntimeHandle,
         first_render: bool,
+        context: std::rc::Rc<crate::fiber::ContextMap>,
     ) -> Self {
         Hooks {
             slots,
@@ -81,6 +84,7 @@ impl<'a> Hooks<'a> {
             fiber_id,
             runtime,
             first_render,
+            context,
         }
     }
 

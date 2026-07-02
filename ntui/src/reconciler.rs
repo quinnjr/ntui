@@ -12,13 +12,14 @@ impl FiberTree {
             return;
         }
         let first_render = !self.get(id).rendered_once;
+        let context = self.context_for(id);
         let mut slots = std::mem::take(&mut self.get_mut(id).hooks);
         let child_el = {
             let FiberKind::Component(c) = &self.get(id).kind else {
                 unreachable!()
             };
             let name = c.name();
-            let mut hooks = Hooks::new(&mut slots, name, id, rt.clone(), first_render);
+            let mut hooks = Hooks::new(&mut slots, name, id, rt.clone(), first_render, context);
             let el = c.render(&mut hooks);
             if hooks.cursor != hooks.slots.len() {
                 panic!(

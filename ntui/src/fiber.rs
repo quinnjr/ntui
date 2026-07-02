@@ -9,6 +9,8 @@ use crate::props::{TextProps, ViewProps};
 
 pub(crate) type FiberId = usize;
 
+pub(crate) type ContextMap = HashMap<TypeId, Rc<dyn std::any::Any>>;
+
 pub(crate) enum FiberKind {
     View(ViewProps),
     Text(TextProps),
@@ -205,6 +207,26 @@ impl FiberTree {
                 out.push(h.clone());
             }
         }
+    }
+
+    /// Resolve a fiber's context by walking ancestors, computed fresh each
+    /// render so it's always current. Root-first insertion means the
+    /// nearest provider (closest ancestor) overwrites farther ones.
+    pub(crate) fn context_for(&self, id: FiberId) -> Rc<ContextMap> {
+        let mut chain = Vec::new();
+        let mut cur = self.get(id).parent;
+        while let Some(p) = cur {
+            chain.push(p);
+            cur = self.get(p).parent;
+        }
+        let mut map = ContextMap::new();
+        for p in chain.into_iter().rev() {
+            // root-first so nearest overwrites
+            if let FiberKind::Provider { type_id, value } = &self.get(p).kind {
+                map.insert(*type_id, value.clone());
+            }
+        }
+        Rc::new(map)
     }
 }
 
