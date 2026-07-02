@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, EventStream};
-use futures::StreamExt;
+use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::backend::{Backend, FullscreenBackend};
@@ -15,6 +15,11 @@ use crate::layout::compute_layout;
 use crate::paint::paint;
 
 const FRAME: Duration = Duration::from_millis(16); // ~60fps cap
+
+/// Per-frame bound on burst draining: caps how many immediately-ready input
+/// events (paste, key repeat) are drained in a single iteration so wakes
+/// can't be starved by a large burst.
+const MAX_EVENT_BURST: usize = 128;
 
 /// Cap on outer `process_wakes` fixpoint passes. Mirrors React's
 /// "maximum update depth exceeded" guard: a component whose effect
@@ -186,6 +191,11 @@ impl<'a, B: Backend + ?Sized> Drop for RestoreGuard<'a, B> {
 /// Belt-and-braces: if a panic is printed while the alternate screen is
 /// active, the message would be invisible and raw mode would linger. Restore
 /// first, then run the default hook.
+///
+/// Note: a panic inside a use_future/use_stream task fires this hook
+/// (restoring the terminal) but does NOT stop the main loop — the app keeps
+/// running against a restored screen. v1 accepts this seam; joining/
+/// propagating task panics is future work.
 fn install_panic_hook() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -238,6 +248,16 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
                 None => break,
             },
         }
+        // Drain any input burst (paste, key repeat) before the frame; bounded so wakes can't starve.
+        for _ in 0..MAX_EVENT_BURST {
+            match events.next().now_or_never() {
+                Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                Some(Some(Ok(Event::Resize(w, h)))) => core.resize(w, h),
+                Some(Some(Ok(_))) => {}
+                Some(Some(Err(e))) => return Err(e.into()),
+                Some(None) | None => break,
+            }
+        }
         core.process_wakes();
         if core.exited {
             break;
@@ -247,6 +267,9 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
         if elapsed < FRAME {
             tokio::time::sleep(FRAME - elapsed).await;
             core.process_wakes();
+            if core.exited {
+                break;
+            }
         }
         core.draw(guard.backend)?;
         last_frame = Instant::now();

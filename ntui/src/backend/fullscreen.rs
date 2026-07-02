@@ -55,6 +55,10 @@ impl Backend for FullscreenBackend {
             cursor::Hide,
             terminal::Clear(terminal::ClearType::All)
         )
+        .inspect_err(|_| {
+            // Raw mode is already on; undo it so a failed enter never leaks a broken shell.
+            let _ = terminal::disable_raw_mode();
+        })
     }
 
     fn leave(&mut self) -> io::Result<()> {
