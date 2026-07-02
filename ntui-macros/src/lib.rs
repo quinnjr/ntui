@@ -11,8 +11,17 @@ use syn::{FnArg, ItemFn, Type, parse_macro_input};
 #[proc_macro_attribute]
 pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
     let f = parse_macro_input!(item as ItemFn);
+    if !f.sig.generics.params.is_empty() || f.sig.asyncness.is_some() {
+        return syn::Error::new_spanned(
+            &f.sig,
+            "#[component] functions cannot be generic or async",
+        )
+        .to_compile_error()
+        .into();
+    }
     let name = &f.sig.ident;
     let vis = &f.vis;
+    let attrs = &f.attrs;
     let body = &f.block;
     let inputs: Vec<&FnArg> = f.sig.inputs.iter().collect();
     let (props_ty, props_pat, hooks_pat): (Type, Box<syn::Pat>, Box<syn::Pat>) =
@@ -44,7 +53,9 @@ pub fn component(_attr: TokenStream, item: TokenStream) -> TokenStream {
         };
     quote! {
         #[allow(non_camel_case_types)]
+        #(#attrs)*
         #vis struct #name;
+
         impl ::ntui::Component for #name {
             type Props = #props_ty;
             fn render(#props_pat: &#props_ty, #hooks_pat: &mut ::ntui::Hooks) -> ::ntui::Element #body
@@ -116,6 +127,8 @@ impl Parse for ElementNode {
 /// JSX-alike: `element! { View(gap: 1) { Text(content: "hi") #(iter) } }`.
 /// Hosts: View, Text, Fragment, ContextProvider(value: ..). Anything else is a
 /// component; its props type is `{Name}Props` by convention (Default-filled).
+///
+/// Identifiers prefixed with `__` are reserved inside `element!` expansions.
 #[proc_macro]
 pub fn element(input: TokenStream) -> TokenStream {
     let node = parse_macro_input!(input as ElementNode);
@@ -135,6 +148,7 @@ fn is_unsuffixed_int_lit(expr: &syn::Expr) -> bool {
             expr,
             ..
         }) => is_unsuffixed_int_lit(expr),
+        syn::Expr::Paren(syn::ExprParen { expr, .. }) => is_unsuffixed_int_lit(expr),
         _ => false,
     }
 }
@@ -178,7 +192,11 @@ fn gen_node(node: &ElementNode) -> proc_macro2::TokenStream {
         "Fragment" => quote! { ::ntui::Element::fragment(#children) },
         "ContextProvider" => {
             let Some((_, v)) = node.props.iter().find(|(k, _)| k == "value") else {
-                return quote! { compile_error!("ContextProvider requires a `value:` prop") };
+                return syn::Error::new_spanned(
+                    &node.name,
+                    "ContextProvider requires a `value:` prop",
+                )
+                .to_compile_error();
             };
             quote! { ::ntui::Element::provider(#v, #children) }
         }

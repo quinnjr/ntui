@@ -12,6 +12,7 @@ struct BadgeProps {
     label: String,
 }
 
+/// Renders a bracketed label, e.g. `[hello]`.
 #[component]
 fn Badge(props: &BadgeProps, _hooks: &mut Hooks) -> Element {
     element! { Text(content: format!("[{}]", props.label)) }
@@ -27,7 +28,7 @@ fn NoProps(_hooks: &mut Hooks) -> Element {
 fn element_macro_builds_hosts_components_keys_and_splices() {
     let items = vec!["x", "y"];
     let el = element! {
-        View(flex_direction: FlexDirection::Column, gap: 1) {
+        View(flex_direction: FlexDirection::Column, gap: (1)) {
             Badge(label: "hello", key: "b1")
             NoProps
             #(items.iter().map(|i| element! { Text(content: *i, key: *i) }))
