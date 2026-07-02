@@ -10,7 +10,12 @@ pub struct Cell {
 
 impl Default for Cell {
     fn default() -> Self {
-        Cell { ch: ' ', fg: Color::Reset, bg: Color::Reset, attrs: Attrs::default() }
+        Cell {
+            ch: ' ',
+            fg: Color::Reset,
+            bg: Color::Reset,
+            attrs: Attrs::default(),
+        }
     }
 }
 
@@ -30,16 +35,25 @@ pub struct Buffer {
 
 impl Buffer {
     pub fn new(width: u16, height: u16) -> Self {
-        Buffer { width, height, cells: vec![Cell::default(); width as usize * height as usize] }
+        Buffer {
+            width,
+            height,
+            cells: vec![Cell::default(); width as usize * height as usize],
+        }
     }
 
-    pub fn width(&self) -> u16 { self.width }
-    pub fn height(&self) -> u16 { self.height }
+    pub fn width(&self) -> u16 {
+        self.width
+    }
+    pub fn height(&self) -> u16 {
+        self.height
+    }
 
     fn idx(&self, x: u16, y: u16) -> usize {
         y as usize * self.width as usize + x as usize
     }
 
+    /// Panics if `x`/`y` are out of bounds (unlike `set`, which clips).
     pub fn get(&self, x: u16, y: u16) -> &Cell {
         &self.cells[self.idx(x, y)]
     }
@@ -60,7 +74,11 @@ impl Buffer {
             for x in 0..self.width {
                 let cell = self.get(x, y);
                 if full || cell != prev.get(x, y) {
-                    out.push(CellUpdate { x, y, cell: cell.clone() });
+                    out.push(CellUpdate {
+                        x,
+                        y,
+                        cell: cell.clone(),
+                    });
                 }
             }
         }
@@ -70,7 +88,11 @@ impl Buffer {
     /// Plain-text grid (styles dropped), rows joined with '\n'. For tests/snapshots.
     pub fn to_text(&self) -> String {
         (0..self.height)
-            .map(|y| (0..self.width).map(|x| self.get(x, y).ch).collect::<String>())
+            .map(|y| {
+                (0..self.width)
+                    .map(|x| self.get(x, y).ch)
+                    .collect::<String>()
+            })
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -84,8 +106,23 @@ mod tests {
     #[test]
     fn set_get_roundtrip_and_oob_ignored() {
         let mut b = Buffer::new(4, 2);
-        b.set(1, 1, Cell { ch: 'x', fg: Color::Red, ..Cell::default() });
-        b.set(99, 99, Cell { ch: '!', ..Cell::default() }); // must not panic
+        b.set(
+            1,
+            1,
+            Cell {
+                ch: 'x',
+                fg: Color::Red,
+                ..Cell::default()
+            },
+        );
+        b.set(
+            99,
+            99,
+            Cell {
+                ch: '!',
+                ..Cell::default()
+            },
+        ); // must not panic
         assert_eq!(b.get(1, 1).ch, 'x');
         assert_eq!(b.get(0, 0).ch, ' ');
     }
@@ -94,9 +131,26 @@ mod tests {
     fn diff_reports_only_changed_cells() {
         let prev = Buffer::new(4, 2);
         let mut next = Buffer::new(4, 2);
-        next.set(2, 0, Cell { ch: 'a', ..Cell::default() });
+        next.set(
+            2,
+            0,
+            Cell {
+                ch: 'a',
+                ..Cell::default()
+            },
+        );
         let d = next.diff(&prev);
-        assert_eq!(d, vec![CellUpdate { x: 2, y: 0, cell: Cell { ch: 'a', ..Cell::default() } }]);
+        assert_eq!(
+            d,
+            vec![CellUpdate {
+                x: 2,
+                y: 0,
+                cell: Cell {
+                    ch: 'a',
+                    ..Cell::default()
+                }
+            }]
+        );
     }
 
     #[test]
@@ -109,8 +163,22 @@ mod tests {
     #[test]
     fn to_text_renders_grid() {
         let mut b = Buffer::new(3, 2);
-        b.set(0, 0, Cell { ch: 'h', ..Cell::default() });
-        b.set(1, 0, Cell { ch: 'i', ..Cell::default() });
+        b.set(
+            0,
+            0,
+            Cell {
+                ch: 'h',
+                ..Cell::default()
+            },
+        );
+        b.set(
+            1,
+            0,
+            Cell {
+                ch: 'i',
+                ..Cell::default()
+            },
+        );
         assert_eq!(b.to_text(), "hi \n   ");
     }
 }

@@ -2,7 +2,15 @@
 pub enum Color {
     #[default]
     Reset,
-    Black, Red, Green, Yellow, Blue, Magenta, Cyan, White, DarkGrey,
+    Black,
+    Red,
+    Green,
+    Yellow,
+    Blue,
+    Magenta,
+    Cyan,
+    White,
+    DarkGrey,
     Rgb(u8, u8, u8),
     Ansi(u8),
 }
