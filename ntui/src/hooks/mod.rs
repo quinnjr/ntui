@@ -4,12 +4,18 @@
 
 use crate::fiber::FiberId;
 
-pub(crate) enum HookSlot {} // variants arrive with each hook
+pub mod state;
+
+pub(crate) enum HookSlot {
+    State(Box<dyn std::any::Any>), // holds a State<T>
+}
 
 impl HookSlot {
     /// Runs teardown for this slot (cleanups, task aborts). Arms added per hook task.
     pub(crate) fn unmount(self) {
-        match self {}
+        match self {
+            HookSlot::State(_) => {}
+        }
     }
 }
 
@@ -61,13 +67,6 @@ impl<'a> Hooks<'a> {
     }
 
     /// Advance the hook cursor; create the slot on first render.
-    ///
-    /// `#[allow(unreachable_code)]`: `HookSlot` is currently uninhabited (no
-    /// hook variants exist yet), so rustc considers `create()` — and the
-    /// `push` call around it — unreachable. This is a property of the empty
-    /// enum, not of the invariant-enforcement logic below; it goes away once
-    /// the first hook variant lands.
-    #[allow(unreachable_code)]
     pub(crate) fn next_slot(&mut self, create: impl FnOnce() -> HookSlot) -> &mut HookSlot {
         if self.cursor == self.slots.len() {
             if self.first_render {
