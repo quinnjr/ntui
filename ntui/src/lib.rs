@@ -36,6 +36,13 @@
 //!   app exits.
 //! - [`testing::TestTerminal`]: drives a component tree headlessly, frame by frame, for
 //!   deterministic tests.
+//!
+//! # Semver note
+//!
+//! `ntui` re-exports `crossterm::event` key types (`KeyCode`, `KeyEvent`, `KeyEventKind`,
+//! `KeyModifiers`) as part of its public API. A breaking change in a future major version
+//! of `crossterm` would therefore surface as a breaking change in `ntui` even if no `ntui`
+//! code changes.
 pub mod backend;
 pub mod buffer;
 pub mod component;

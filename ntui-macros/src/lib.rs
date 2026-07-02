@@ -129,6 +129,10 @@ impl Parse for ElementNode {
 /// component; its props type is `{Name}Props` by convention (Default-filled).
 ///
 /// Identifiers prefixed with `__` are reserved inside `element!` expansions.
+///
+/// The expansion emits fully-qualified `::ntui::` paths (proc macros cannot use
+/// `$crate`), so the library must be reachable as `::ntui` — i.e. depended on as
+/// `ntui`; renaming the dependency breaks codegen.
 #[proc_macro]
 pub fn element(input: TokenStream) -> TokenStream {
     let node = parse_macro_input!(input as ElementNode);

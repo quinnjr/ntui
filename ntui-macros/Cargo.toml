@@ -2,6 +2,8 @@
 name = "ntui-macros"
 version = "0.1.0"
 edition = "2024"
+description = "Proc macros (element! and #[component]) for the ntui TUI library."
+license = "MIT OR Apache-2.0"
 
 [lib]
 proc-macro = true

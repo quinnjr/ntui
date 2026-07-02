@@ -1,5 +1,6 @@
 /// A terminal color: a named ANSI color, the terminal's default (`Reset`),
 /// a 24-bit RGB value, or an indexed ANSI 256 color.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Color {
     #[default]
@@ -27,6 +28,7 @@ pub struct Attrs {
 }
 
 /// Font weight for a `Text` element.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Weight {
     #[default]
@@ -35,6 +37,7 @@ pub enum Weight {
 }
 
 /// The line style drawn around a `View`'s border; `None` draws no border.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum BorderStyle {
     #[default]

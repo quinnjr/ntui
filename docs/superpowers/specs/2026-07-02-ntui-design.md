@@ -26,7 +26,7 @@ product; the app is a demo/driver.
 
 ```
 ntui/            # core: engine, hooks, components, terminal backend
-ntui-macros/     # proc macros: element!, #[derive(Props)], #[component]
+ntui-macros/     # proc macros: element!, #[component]
 examples/        # spinner, counter, keyed list, claude-code-ish demo
 ```
 
@@ -63,8 +63,12 @@ fn App(hooks: Hooks) -> impl Into<AnyElement> {
 - `element!` is Rust's JSX: `Component(prop: value, ...) { children }`.
 - `#(expr)` splices an iterator of elements (dynamic children); the `key`
   prop controls identity across renders.
-- Props are plain structs with `#[derive(Props)]`; every field must have a
-  default so the macro can set any subset.
+- Props are plain structs deriving `Clone, PartialEq, Default`; every field
+  must have a default so the macro can set any subset.
+
+  > **Erratum:** `#[derive(Props)]` was dropped during implementation as YAGNI;
+  > props derive `Clone, PartialEq, Default` directly rather than via a custom
+  > derive.
 - `Hooks` is a handle passed to every component function. Hook identity is
   call order (React's rules); violations panic at runtime with the component
   name and hook index.

@@ -14,6 +14,7 @@ pub struct Element {
 
 /// The kind of tree node an [`Element`] wraps: a layout box, a text run, a
 /// grouping fragment, a context provider, or a nested component.
+#[non_exhaustive]
 pub enum Node {
     View {
         props: ViewProps,

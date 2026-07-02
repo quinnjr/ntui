@@ -2,6 +2,7 @@ use crate::style::{BorderStyle, Color, Weight};
 
 /// A size along one axis: automatically sized to content, a fixed number of
 /// terminal cells, or a percentage of the parent's size.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Debug, Default)]
 pub enum Dimension {
     #[default]
@@ -11,6 +12,7 @@ pub enum Dimension {
 }
 
 /// The axis a `View`'s children are laid out along.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum FlexDirection {
     #[default]
@@ -37,6 +39,7 @@ pub struct ViewProps {
 }
 
 /// How text overflowing its box width is handled.
+#[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum TextWrap {
     #[default]
