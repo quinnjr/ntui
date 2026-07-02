@@ -1,8 +1,11 @@
 use std::collections::HashSet;
+use std::time::{Duration, Instant};
 
+use crossterm::event::{Event, EventStream};
+use futures::StreamExt;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use crate::backend::Backend;
+use crate::backend::{Backend, FullscreenBackend};
 use crate::buffer::Buffer;
 use crate::element::Element;
 use crate::error::Error;
@@ -10,6 +13,8 @@ use crate::fiber::{FiberId, FiberTree};
 use crate::hooks::{RuntimeHandle, Wake};
 use crate::layout::compute_layout;
 use crate::paint::paint;
+
+const FRAME: Duration = Duration::from_millis(16); // ~60fps cap
 
 /// Cap on outer `process_wakes` fixpoint passes. Mirrors React's
 /// "maximum update depth exceeded" guard: a component whose effect
@@ -143,8 +148,7 @@ impl AppCore {
         Ok(())
     }
 
-    // Used by the render()/event-loop task (not yet implemented) to await the next wake.
-    #[allow(dead_code)]
+    // Used by the render() event-loop task to await the next wake.
     pub async fn wait_wake(&mut self) -> Option<Wake> {
         self.wake_rx.recv().await
     }
@@ -165,5 +169,103 @@ impl AppCore {
         if let Some(root) = self.tree.root {
             self.pending.push(root);
         }
+    }
+}
+
+/// Restores the terminal even when a panic unwinds through the render future.
+pub(crate) struct RestoreGuard<'a, B: Backend + ?Sized> {
+    pub backend: &'a mut B,
+}
+
+impl<'a, B: Backend + ?Sized> Drop for RestoreGuard<'a, B> {
+    fn drop(&mut self) {
+        let _ = self.backend.leave();
+    }
+}
+
+/// Belt-and-braces: if a panic is printed while the alternate screen is
+/// active, the message would be invisible and raw mode would linger. Restore
+/// first, then run the default hook.
+fn install_panic_hook() {
+    use std::sync::Once;
+    static ONCE: Once = Once::new();
+    ONCE.call_once(|| {
+        let prev = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            let _ = crossterm::terminal::disable_raw_mode();
+            let _ = crossterm::execute!(
+                std::io::stdout(),
+                crossterm::cursor::Show,
+                crossterm::terminal::LeaveAlternateScreen
+            );
+            prev(info);
+        }));
+    });
+}
+
+/// Run the app fullscreen until a component calls `use_app().exit()`.
+/// Note: the returned future is !Send — use `#[tokio::main(flavor = "current_thread")]`.
+pub async fn render(el: Element) -> Result<(), Error> {
+    install_panic_hook();
+    let mut backend = FullscreenBackend::new();
+    backend.enter()?;
+    let guard = RestoreGuard {
+        backend: &mut backend,
+    };
+    run_loop(el, guard).await
+}
+
+async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result<(), Error> {
+    let size = guard.backend.size()?;
+    let mut core = AppCore::new(el, size);
+    core.process_wakes();
+    core.draw(guard.backend)?;
+
+    let mut events = EventStream::new();
+    let mut last_frame = Instant::now();
+
+    while !core.exited {
+        tokio::select! {
+            ev = events.next() => match ev {
+                Some(Ok(Event::Key(k))) => core.dispatch_key(k),
+                Some(Ok(Event::Resize(w, h))) => core.resize(w, h),
+                Some(Err(e)) => return Err(e.into()),
+                None => break, // stdin closed
+                _ => {}
+            },
+            w = core.wait_wake() => match w {
+                Some(w) => core.apply_wake(w),
+                None => break,
+            },
+        }
+        core.process_wakes();
+        if core.exited {
+            break;
+        }
+        // Coalesce: hold the frame if we're ahead of the cap, absorbing more wakes.
+        let elapsed = last_frame.elapsed();
+        if elapsed < FRAME {
+            tokio::time::sleep(FRAME - elapsed).await;
+            core.process_wakes();
+        }
+        core.draw(guard.backend)?;
+        last_frame = Instant::now();
+    }
+    Ok(()) // guard drops here -> leave()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::backend::TestBackend;
+
+    #[test]
+    fn restore_guard_leaves_on_drop() {
+        let mut be = TestBackend::new(4, 2);
+        be.enter().unwrap();
+        {
+            let _guard = RestoreGuard { backend: &mut be };
+        }
+        assert_eq!(be.lifecycle, vec!["enter", "leave"]);
     }
 }

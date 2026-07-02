@@ -166,6 +166,9 @@ impl FiberTree {
         let mut order = Vec::new();
         self.collect_dfs(root, &mut order);
         for id in order {
+            // If user code panics mid-processing, this fiber's taken hook slots are dropped
+            // un-restored; acceptable because a panic tears down the whole app (see RestoreGuard
+            // in runtime.rs).
             let mut slots = std::mem::take(&mut self.get_mut(id).hooks);
             for slot in &mut slots {
                 if let crate::hooks::HookSlot::Effect(e) = slot

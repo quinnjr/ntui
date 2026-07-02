@@ -7,6 +7,8 @@ use crate::hooks::{HookSlot, Hooks};
 impl<'a> Hooks<'a> {
     /// Spawn `make()` once, on mount. The task is aborted when the component
     /// unmounts. Communicate back through `State<T>` handles (they are Send).
+    /// Panics inside the task are currently swallowed (the JoinHandle is never joined);
+    /// propagate errors through `State` values instead.
     pub fn use_future<F, Fut>(&mut self, make: F)
     where
         F: FnOnce() -> Fut,

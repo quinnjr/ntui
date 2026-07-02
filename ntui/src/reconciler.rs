@@ -13,6 +13,9 @@ impl FiberTree {
         }
         let first_render = !self.get(id).rendered_once;
         let context = self.context_for(id);
+        // If user code panics mid-processing, this fiber's taken hook slots are dropped
+        // un-restored; acceptable because a panic tears down the whole app (see RestoreGuard
+        // in runtime.rs).
         let mut slots = std::mem::take(&mut self.get_mut(id).hooks);
         let child_el = {
             let FiberKind::Component(c) = &self.get(id).kind else {
