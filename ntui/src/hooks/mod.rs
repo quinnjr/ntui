@@ -39,6 +39,7 @@ pub struct Hooks<'a> {
     pub(crate) component_name: &'static str,
     pub(crate) fiber_id: FiberId,
     pub(crate) runtime: RuntimeHandle,
+    pub(crate) first_render: bool,
 }
 
 impl<'a> Hooks<'a> {
@@ -47,6 +48,7 @@ impl<'a> Hooks<'a> {
         component_name: &'static str,
         fiber_id: FiberId,
         runtime: RuntimeHandle,
+        first_render: bool,
     ) -> Self {
         Hooks {
             slots,
@@ -54,23 +56,32 @@ impl<'a> Hooks<'a> {
             component_name,
             fiber_id,
             runtime,
+            first_render,
         }
     }
 
     /// Advance the hook cursor; create the slot on first render.
+    ///
+    /// `#[allow(unreachable_code)]`: `HookSlot` is currently uninhabited (no
+    /// hook variants exist yet), so rustc considers `create()` — and the
+    /// `push` call around it — unreachable. This is a property of the empty
+    /// enum, not of the invariant-enforcement logic below; it goes away once
+    /// the first hook variant lands.
     #[allow(unreachable_code)]
     pub(crate) fn next_slot(&mut self, create: impl FnOnce() -> HookSlot) -> &mut HookSlot {
         if self.cursor == self.slots.len() {
-            self.slots.push(create());
+            if self.first_render {
+                self.slots.push(create());
+            } else {
+                panic!(
+                    "ntui: {}: more hooks called than in the previous render (slot {}) — hooks must run unconditionally in the same order every render",
+                    self.component_name, self.cursor
+                );
+            }
         }
         let i = self.cursor;
         self.cursor += 1;
-        self.slots.get_mut(i).unwrap_or_else(|| {
-            panic!(
-                "ntui: {}: more hooks called than previous render (slot {})",
-                self.component_name, i
-            )
-        })
+        &mut self.slots[i]
     }
 
     pub(crate) fn hook_mismatch(&self, expected: &'static str) -> ! {

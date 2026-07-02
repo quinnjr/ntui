@@ -39,6 +39,7 @@ pub(crate) struct Fiber {
     pub children: Vec<FiberId>,
     pub parent: Option<FiberId>,
     pub layout: Rect,
+    pub rendered_once: bool,
 }
 
 pub(crate) struct FiberTree {
@@ -60,10 +61,14 @@ impl FiberTree {
     }
 
     pub fn get(&self, id: FiberId) -> &Fiber {
-        &self.fibers[&id]
+        self.fibers
+            .get(&id)
+            .unwrap_or_else(|| panic!("ntui: no fiber with id {id}"))
     }
     pub fn get_mut(&mut self, id: FiberId) -> &mut Fiber {
-        self.fibers.get_mut(&id).unwrap()
+        self.fibers
+            .get_mut(&id)
+            .unwrap_or_else(|| panic!("ntui: no fiber with id {id}"))
     }
     pub fn contains(&self, id: FiberId) -> bool {
         self.fibers.contains_key(&id)
@@ -117,6 +122,7 @@ impl FiberTree {
                 children: Vec::new(),
                 parent,
                 layout: Rect::default(),
+                rendered_once: false,
             },
         );
         self.layout_dirty = true;
@@ -133,12 +139,18 @@ impl FiberTree {
     }
 
     /// Children-first teardown, then hook teardown for this fiber.
+    ///
+    /// Precondition: the caller must have already removed `id` from its parent's
+    /// `children` (or be unmounting the root/an orphaned subtree).
     pub(crate) fn unmount(&mut self, id: FiberId) {
         let children = self.get(id).children.clone();
         for c in children {
             self.unmount(c);
         }
-        let fiber = self.fibers.remove(&id).unwrap();
+        let fiber = self
+            .fibers
+            .remove(&id)
+            .unwrap_or_else(|| panic!("ntui: no fiber with id {id}"));
         for slot in fiber.hooks {
             slot.unmount();
         }

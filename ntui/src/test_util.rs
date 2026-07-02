@@ -1,3 +1,6 @@
+// consumed from Task 6 onward; remove this allow then
+#![allow(dead_code)]
+
 use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Clonable shared cell for smuggling handles/logs out of components in tests.
