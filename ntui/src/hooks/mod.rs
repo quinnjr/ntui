@@ -1,5 +1,6 @@
 use crate::fiber::FiberId;
 
+pub mod app;
 pub mod effect;
 pub mod input;
 pub mod state;
@@ -28,21 +29,27 @@ impl HookSlot {
 #[derive(Debug)]
 pub(crate) enum Wake {
     Dirty(FiberId),
-    // Constructed once the render()/event-loop task wires Ctrl+C and app.exit().
-    #[allow(dead_code)]
+    Redraw, // full re-render from the root
     Exit,
 }
 
 #[derive(Clone)]
 pub(crate) struct RuntimeHandle {
     pub wake: tokio::sync::mpsc::UnboundedSender<Wake>,
+    pub size: std::sync::Arc<std::sync::Mutex<(u16, u16)>>,
 }
 
 impl RuntimeHandle {
     #[cfg(test)]
     pub(crate) fn test_handle() -> (Self, tokio::sync::mpsc::UnboundedReceiver<Wake>) {
         let (wake, rx) = tokio::sync::mpsc::unbounded_channel();
-        (RuntimeHandle { wake }, rx)
+        (
+            RuntimeHandle {
+                wake,
+                size: std::sync::Arc::new(std::sync::Mutex::new((80, 24))),
+            },
+            rx,
+        )
     }
 }
 

@@ -31,7 +31,10 @@ pub(crate) struct AppCore {
 impl AppCore {
     pub fn new(el: Element, size: (u16, u16)) -> Self {
         let (wake, wake_rx) = unbounded_channel();
-        let rt = RuntimeHandle { wake };
+        let rt = RuntimeHandle {
+            wake,
+            size: std::sync::Arc::new(std::sync::Mutex::new(size)),
+        };
         let mut tree = FiberTree::new();
         tree.mount_root(el, &rt);
         tree.flush_effects();
@@ -49,6 +52,12 @@ impl AppCore {
     pub fn apply_wake(&mut self, w: Wake) {
         match w {
             Wake::Dirty(id) => self.pending.push(id),
+            Wake::Redraw => {
+                if let Some(root) = self.tree.root {
+                    self.pending.push(root);
+                }
+                self.prev = None; // full repaint
+            }
             Wake::Exit => self.exited = true,
         }
     }
@@ -142,11 +151,16 @@ impl AppCore {
 
     pub fn resize(&mut self, w: u16, h: u16) {
         self.size = (w, h);
+        *self
+            .rt
+            .size
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner) = (w, h);
         self.tree.layout_dirty = true;
         self.prev = None; // full repaint
-        // Pushing the root as dirty is forward-looking for the upcoming
-        // use_terminal_size hook (not yet implemented). The caller must
-        // invoke process_wakes() after resize() to actually apply this;
+        // Push the root as dirty so components reading use_terminal_size()
+        // re-render with the new size. The caller must invoke
+        // process_wakes() after resize() to actually apply this;
         // TestTerminal::resize does, and the future render loop must too.
         if let Some(root) = self.tree.root {
             self.pending.push(root);
