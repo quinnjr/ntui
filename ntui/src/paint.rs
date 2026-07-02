@@ -41,9 +41,17 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer) {
         }
         FiberKind::Text(props) => {
             let r = fiber.layout;
-            let lines = match props.wrap {
-                TextWrap::Wrap => wrap_text(&props.content, r.width as usize),
-                TextWrap::Truncate => vec![truncate_line(&props.content, r.width as usize)],
+            // Reuse the lines wrapped by `compute_layout` at the final resolved
+            // width; fall back to wrapping here only if layout hasn't run.
+            let fallback;
+            let lines: &[String] = if let Some(cached) = &fiber.wrapped {
+                cached
+            } else {
+                fallback = match props.wrap {
+                    TextWrap::Wrap => wrap_text(&props.content, r.width as usize),
+                    TextWrap::Truncate => vec![truncate_line(&props.content, r.width as usize)],
+                };
+                &fallback
             };
             let attrs = Attrs {
                 bold: props.weight == Weight::Bold,
@@ -51,6 +59,9 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer) {
             };
             for (dy, line) in lines.iter().take(r.height as usize).enumerate() {
                 for (dx, ch) in line.chars().take(r.width as usize).enumerate() {
+                    // Sanitize application-supplied control characters (ESC, BEL,
+                    // C0/C1, DEL) to prevent terminal escape-sequence injection.
+                    let ch = if ch.is_control() { ' ' } else { ch };
                     let (x, y) = (r.x.saturating_add(dx as u16), r.y.saturating_add(dy as u16));
                     // keep the background an ancestor View already painted
                     let bg = if x < buf.width() && y < buf.height() {
@@ -218,6 +229,34 @@ mod tests {
         let mut buf = Buffer::new(3, 3);
         paint(&tree, &mut buf);
         assert_eq!(buf.get(1, 1).bg, Color::Blue);
+    }
+
+    #[test]
+    fn text_control_chars_are_sanitized() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::text(TextProps {
+                content: "\x1b]52;c;evil\x07hi".into(),
+                ..Default::default()
+            }),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 3);
+        let mut buf = Buffer::new(20, 3);
+        paint(&tree, &mut buf);
+        // No painted cell may carry a control character.
+        for y in 0..buf.height() {
+            for x in 0..buf.width() {
+                assert!(
+                    !buf.get(x, y).ch.is_control(),
+                    "control char leaked at ({x},{y})"
+                );
+            }
+        }
+        // The visible payload still survives.
+        let out = buf.to_text();
+        assert!(out.contains("hi"), "visible text missing: {out:?}");
     }
 
     #[test]

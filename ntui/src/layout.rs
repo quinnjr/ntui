@@ -5,7 +5,7 @@ use taffy::prelude::*;
 use crate::fiber::{FiberId, FiberKind, FiberTree, Rect};
 use crate::props::{Dimension as NDim, FlexDirection as NFlex, TextWrap, ViewProps};
 use crate::style::BorderStyle;
-use crate::text::wrap_text;
+use crate::text::{truncate_line, wrap_text};
 
 pub(crate) struct TextContext {
     content: String,
@@ -48,11 +48,26 @@ pub(crate) fn compute_layout(tree: &mut FiberTree, width: u16, height: u16) {
     for (fid, node) in pairs {
         let l = taffy.layout(node).unwrap();
         let (x, y) = abs[&node];
-        tree.get_mut(fid).layout = Rect {
+        let rect = Rect {
             x: x.round() as u16,
             y: y.round() as u16,
             width: l.size.width.round() as u16,
             height: l.size.height.round() as u16,
+        };
+        let fiber = tree.get_mut(fid);
+        fiber.layout = rect;
+        // Wrap/truncate once here at the final resolved width so `paint` (which
+        // runs every frame, even when layout is cached) reuses these lines
+        // instead of re-wrapping. Refilled each pass so stale lines from a
+        // previous frame can never be painted.
+        fiber.wrapped = match &fiber.kind {
+            FiberKind::Text(props) => Some(match props.wrap {
+                TextWrap::Wrap => wrap_text(&props.content, rect.width as usize),
+                TextWrap::Truncate => {
+                    vec![truncate_line(&props.content, rect.width as usize)]
+                }
+            }),
+            _ => None,
         };
     }
     tree.layout_dirty = false;

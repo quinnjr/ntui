@@ -39,6 +39,7 @@ mod tests {
     use crate::component::Component;
     use crate::element::Element;
     use crate::hooks::Hooks;
+    use crate::hooks::state::State;
     use crate::props::TextProps;
     use crate::test_util::Shared;
     use crate::testing::TestTerminal;
@@ -115,5 +116,41 @@ mod tests {
         .unwrap();
         t.send_key(KeyCode::Char('x')).unwrap();
         assert_eq!(*log.lock(), vec!["inner:Char('x')"]);
+    }
+
+    struct Fresh;
+    #[derive(Clone, PartialEq, Default)]
+    struct FreshProps {
+        seen: Shared<Vec<i32>>,
+        handle: Shared<Option<State<i32>>>,
+    }
+    impl Component for Fresh {
+        type Props = FreshProps;
+        fn render(props: &FreshProps, hooks: &mut Hooks) -> Element {
+            let n = hooks.use_state(|| 0);
+            *props.handle.lock() = Some(n.clone());
+            let cur = n.get();
+            let seen = props.seen.clone();
+            // Captures `cur` by value: a stale handler slot would keep recording 0.
+            hooks.use_input(move |_ev, _| seen.lock().push(cur));
+            Element::text(TextProps {
+                content: cur.to_string(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn use_input_handler_captures_fresh_state_after_rerender() {
+        let props = FreshProps::default();
+        let mut t = TestTerminal::new(10, 1, Element::component::<Fresh>(props.clone())).unwrap();
+
+        t.send_key(KeyCode::Char('a')).unwrap();
+        assert_eq!(*props.seen.lock(), vec![0]); // handler saw the initial state
+
+        props.handle.lock().clone().unwrap().set(42); // re-render with new state
+        t.tick().await.unwrap();
+        t.send_key(KeyCode::Char('b')).unwrap();
+        assert_eq!(*props.seen.lock(), vec![0, 42]); // handler slot was replaced, sees fresh value
     }
 }

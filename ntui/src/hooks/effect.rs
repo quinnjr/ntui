@@ -113,4 +113,66 @@ mod tests {
         tree.unmount(root);
         assert_eq!(*props.log.lock(), vec!["run0", "clean0", "run1", "clean1"]);
     }
+
+    struct MultiFx;
+    #[derive(Clone, PartialEq, Default)]
+    struct MultiFxProps {
+        log: Shared<Vec<String>>,
+        dep_a: Shared<Option<State<i32>>>,
+    }
+    impl Component for MultiFx {
+        type Props = MultiFxProps;
+        fn render(props: &MultiFxProps, hooks: &mut Hooks) -> Element {
+            let a = hooks.use_state(|| 0);
+            *props.dep_a.lock() = Some(a.clone());
+            let av = a.get();
+
+            let log_a = props.log.clone();
+            hooks.use_effect(av, move || {
+                log_a.lock().push("runA".into());
+                let log_a = log_a.clone();
+                move || log_a.lock().push("cleanA".into())
+            });
+
+            // Second effect with a fixed dep: only ever runs once.
+            let log_b = props.log.clone();
+            hooks.use_effect(0, move || {
+                log_b.lock().push("runB".into());
+                let log_b = log_b.clone();
+                move || log_b.lock().push("cleanB".into())
+            });
+
+            Element::text(TextProps {
+                content: av.to_string(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn multiple_effects_track_deps_independently() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = MultiFxProps::default();
+        let root = tree.mount_root(Element::component::<MultiFx>(props.clone()), &rt);
+
+        // (a) Both effects run on mount in declaration order.
+        tree.flush_effects();
+        assert_eq!(*props.log.lock(), vec!["runA", "runB"]);
+
+        // (c) Changing only the first effect's dep re-runs only that effect
+        // (its cleanup then its body); the second effect is untouched.
+        props.log.lock().clear();
+        props.dep_a.lock().clone().unwrap().set(1);
+        tree.render_fiber(root, &rt);
+        tree.flush_effects();
+        assert_eq!(*props.log.lock(), vec!["cleanA", "runA"]);
+
+        // (b) On unmount, cleanups run in declaration (forward) order — the impl
+        // iterates the fiber's hook slots front-to-back in HookSlot::unmount.
+        props.log.lock().clear();
+        tree.unmount(root);
+        assert_eq!(*props.log.lock(), vec!["cleanA", "cleanB"]);
+    }
 }

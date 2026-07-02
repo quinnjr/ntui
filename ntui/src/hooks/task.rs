@@ -114,4 +114,105 @@ mod tests {
         t.tick().await.unwrap();
         assert!(!*props.fired.lock());
     }
+
+    struct Streamer;
+    #[derive(Clone, PartialEq, Default)]
+    struct StreamerProps {
+        items: Shared<Vec<i32>>,
+    }
+    impl Component for Streamer {
+        type Props = StreamerProps;
+        fn render(props: &StreamerProps, hooks: &mut Hooks) -> Element {
+            let items = props.items.clone();
+            hooks.use_stream(
+                || futures::stream::iter(vec![1, 2, 3]),
+                move |item| items.lock().push(item),
+            );
+            Element::text(TextProps {
+                content: "s".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_stream_forwards_all_items_in_order() {
+        let props = StreamerProps::default();
+        let mut t =
+            TestTerminal::new(10, 1, Element::component::<Streamer>(props.clone())).unwrap();
+        tokio::time::sleep(Duration::from_millis(50)).await; // let the spawned task drain
+        t.tick().await.unwrap();
+        assert_eq!(*props.items.lock(), vec![1, 2, 3]);
+    }
+
+    struct SlowStreamer;
+    #[derive(Clone, PartialEq, Default)]
+    struct SlowStreamerProps {
+        items: Shared<Vec<i32>>,
+    }
+    impl Component for SlowStreamer {
+        type Props = SlowStreamerProps;
+        fn render(props: &SlowStreamerProps, hooks: &mut Hooks) -> Element {
+            let items = props.items.clone();
+            hooks.use_stream(
+                || {
+                    use futures::StreamExt;
+                    futures::stream::iter(vec![1, 2, 3]).then(|i| async move {
+                        tokio::time::sleep(Duration::from_millis(100)).await;
+                        i
+                    })
+                },
+                move |item| items.lock().push(item),
+            );
+            Element::text(TextProps {
+                content: "s".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct StreamGate;
+    #[derive(Clone, PartialEq, Default)]
+    struct StreamGateProps {
+        items: Shared<Vec<i32>>,
+        show: Shared<Option<State<bool>>>,
+    }
+    impl Component for StreamGate {
+        type Props = StreamGateProps;
+        fn render(props: &StreamGateProps, hooks: &mut Hooks) -> Element {
+            let show = hooks.use_state(|| true);
+            *props.show.lock() = Some(show.clone());
+            if show.get() {
+                Element::fragment(vec![Element::component::<SlowStreamer>(
+                    SlowStreamerProps {
+                        items: props.items.clone(),
+                    },
+                )])
+            } else {
+                Element::fragment(vec![])
+            }
+        }
+    }
+
+    #[tokio::test(start_paused = true)]
+    async fn use_stream_aborts_on_unmount() {
+        let props = StreamGateProps::default();
+        let mut t =
+            TestTerminal::new(10, 1, Element::component::<StreamGate>(props.clone())).unwrap();
+        // Let the stream start draining (first item lands around 100ms) but not finish.
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        t.tick().await.unwrap();
+        props.show.lock().clone().unwrap().set(false); // unmount mid-drain -> abort task
+        t.tick().await.unwrap();
+        let at_unmount = props.items.lock().len();
+        assert!(at_unmount < 3, "stream should still be draining at unmount");
+        // Wait well past when the remaining items would have arrived.
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        t.tick().await.unwrap();
+        assert_eq!(
+            props.items.lock().len(),
+            at_unmount,
+            "no further items after the aborted stream"
+        );
+    }
 }

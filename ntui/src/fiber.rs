@@ -37,6 +37,11 @@ pub(crate) struct Fiber {
     pub children: Vec<FiberId>,
     pub parent: Option<FiberId>,
     pub layout: Rect,
+    /// Text fibers only: the lines to paint, wrapped/truncated at the final
+    /// resolved layout width. Filled by `compute_layout` each pass and read by
+    /// `paint` so text is not re-wrapped on every frame. `None` for non-Text
+    /// fibers and until the first layout pass.
+    pub wrapped: Option<Vec<String>>,
     pub rendered_once: bool,
 }
 
@@ -124,6 +129,7 @@ impl FiberTree {
                 children: Vec::new(),
                 parent,
                 layout: Rect::default(),
+                wrapped: None,
                 rendered_once: false,
             },
         );
