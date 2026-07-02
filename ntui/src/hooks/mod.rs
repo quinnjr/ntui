@@ -1,11 +1,13 @@
 use crate::fiber::FiberId;
 
 pub mod effect;
+pub mod input;
 pub mod state;
 
 pub(crate) enum HookSlot {
     State(Box<dyn std::any::Any>), // holds a State<T>
     Effect(effect::EffectSlot),
+    Input(input::InputHandler),
 }
 
 impl HookSlot {
@@ -18,6 +20,7 @@ impl HookSlot {
                     c();
                 }
             }
+            HookSlot::Input(_) => {}
         }
     }
 }

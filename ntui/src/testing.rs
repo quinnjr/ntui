@@ -1,5 +1,7 @@
 //! Public test harness: drive an ntui app frame by frame without a terminal.
 
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
 use crate::backend::TestBackend;
 use crate::element::Element;
 use crate::error::Error;
@@ -49,6 +51,16 @@ impl TestTerminal {
 
     pub fn exited(&self) -> bool {
         self.core.exited
+    }
+
+    pub fn send_key(&mut self, code: KeyCode) -> Result<(), Error> {
+        self.send_key_event(KeyEvent::new(code, KeyModifiers::NONE))
+    }
+
+    pub fn send_key_event(&mut self, ev: KeyEvent) -> Result<(), Error> {
+        self.core.dispatch_key(ev);
+        self.core.process_wakes();
+        self.core.draw(&mut self.backend)
     }
 }
 

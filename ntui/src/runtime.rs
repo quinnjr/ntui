@@ -83,6 +83,23 @@ impl AppCore {
         }
     }
 
+    /// Route a key event deepest-first through mounted `use_input` handlers,
+    /// stopping early if a handler calls `stop_propagation`. Release events
+    /// (Windows/kitty protocol) are dropped — only Press/Repeat are dispatched.
+    pub fn dispatch_key(&mut self, ev: crossterm::event::KeyEvent) {
+        if ev.kind == crossterm::event::KeyEventKind::Release {
+            return;
+        }
+        let handlers = self.tree.collect_input_handlers();
+        let mut ctx = crate::hooks::input::InputCtx { stopped: false };
+        for h in handlers {
+            h.borrow_mut()(ev, &mut ctx);
+            if ctx.stopped {
+                break;
+            }
+        }
+    }
+
     fn depth(&self, mut id: FiberId) -> usize {
         let mut d = 0;
         while self.tree.contains(id) {

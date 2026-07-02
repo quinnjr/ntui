@@ -22,6 +22,7 @@ pub use element::{Element, Node};
 pub use error::Error;
 pub use hooks::Hooks;
 pub use hooks::effect::Cleanup;
+pub use hooks::input::{InputCtx, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 pub use hooks::state::State;
 pub use props::{Dimension, FlexDirection, TextProps, TextWrap, ViewProps};
 pub use style::{Attrs, BorderStyle, Color, Weight};

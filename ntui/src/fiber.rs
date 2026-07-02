@@ -185,6 +185,27 @@ impl FiberTree {
             self.collect_dfs(*c, out);
         }
     }
+
+    /// Deepest-first (post-order DFS) collection of input handlers, so that
+    /// events reach the most nested `use_input` first and bubble outward.
+    pub(crate) fn collect_input_handlers(&self) -> Vec<crate::hooks::input::InputHandler> {
+        let mut out = Vec::new();
+        if let Some(root) = self.root {
+            self.collect_handlers_post(root, &mut out);
+        }
+        out
+    }
+
+    fn collect_handlers_post(&self, id: FiberId, out: &mut Vec<crate::hooks::input::InputHandler>) {
+        for c in &self.get(id).children {
+            self.collect_handlers_post(*c, out);
+        }
+        for slot in &self.get(id).hooks {
+            if let HookSlot::Input(h) = slot {
+                out.push(h.clone());
+            }
+        }
+    }
 }
 
 #[cfg(test)]
