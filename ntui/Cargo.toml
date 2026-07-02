@@ -12,3 +12,4 @@ tokio = { version = "1.52.3", features = ["rt", "macros", "sync", "time"] }
 
 [dev-dependencies]
 insta = "1.48.0"
+tokio = { version = "1.52.3", features = ["rt", "macros", "time", "test-util"] }

@@ -4,11 +4,13 @@ pub mod app;
 pub mod effect;
 pub mod input;
 pub mod state;
+pub mod task;
 
 pub(crate) enum HookSlot {
     State(Box<dyn std::any::Any>), // holds a State<T>
     Effect(effect::EffectSlot),
     Input(input::InputHandler),
+    Task(tokio::task::JoinHandle<()>),
 }
 
 impl HookSlot {
@@ -22,6 +24,7 @@ impl HookSlot {
                 }
             }
             HookSlot::Input(_) => {}
+            HookSlot::Task(handle) => handle.abort(),
         }
     }
 }
