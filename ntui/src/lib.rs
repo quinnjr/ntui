@@ -3,6 +3,10 @@ pub mod backend;
 pub mod buffer;
 pub mod component;
 pub mod element;
+pub(crate) mod fiber;
 pub mod hooks;
 pub mod props;
+pub(crate) mod reconciler;
 pub mod style;
+#[cfg(test)]
+pub(crate) mod test_util;
