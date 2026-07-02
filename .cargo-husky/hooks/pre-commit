@@ -1,0 +1,22 @@
+#!/bin/sh
+#
+# Installed by cargo-husky (user-hooks). ntui pre-commit:
+#   1. auto-apply rustfmt and re-stage the formatted files
+#   2. clippy as a hard error on any warning
+#
+set -e
+
+echo "[pre-commit] cargo fmt --all (auto-fix)"
+staged_rs=$(git diff --cached --name-only --diff-filter=ACM -- '*.rs')
+cargo fmt --all
+# fuzz/ is a separate workspace; format it best-effort too.
+(cd fuzz 2>/dev/null && cargo fmt) 2>/dev/null || true
+# Re-stage any *.rs files that were already staged and may have been reformatted.
+if [ -n "$staged_rs" ]; then
+    echo "$staged_rs" | xargs git add
+fi
+
+echo "[pre-commit] cargo clippy --workspace --all-targets -D warnings"
+cargo clippy --workspace --all-targets -- -D warnings
+
+echo "[pre-commit] ok"

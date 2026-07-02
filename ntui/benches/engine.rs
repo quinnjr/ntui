@@ -11,7 +11,7 @@
 use criterion::{BenchmarkId, Criterion, criterion_group, criterion_main};
 use std::hint::black_box;
 
-use ntui::__bench::{truncate_line, wrap_text};
+use ntui::__private::{truncate_line, wrap_text};
 use ntui::buffer::{Buffer, Cell};
 use ntui::testing::TestTerminal;
 use ntui::{Color, FlexDirection, KeyCode, component, element};

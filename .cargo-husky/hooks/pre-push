@@ -1,0 +1,34 @@
+#!/bin/sh
+#
+# Installed by cargo-husky (user-hooks). ntui pre-push: fuzz smoke test.
+# Builds every fuzz target (catches breakage) and runs each briefly.
+# Requires cargo-fuzz + a nightly toolchain; skipped cleanly if absent.
+# Tune with NTUI_FUZZ_SECS (per-target seconds; 0 = build only).
+#
+set -e
+
+if ! command -v cargo-fuzz >/dev/null 2>&1; then
+    echo "[pre-push] cargo-fuzz not installed — skipping fuzz smoke"
+    echo "           (install with: cargo install cargo-fuzz)"
+    exit 0
+fi
+
+echo "[pre-push] building fuzz targets"
+cargo fuzz build
+
+secs="${NTUI_FUZZ_SECS:-8}"
+if [ "$secs" = "0" ]; then
+    echo "[pre-push] NTUI_FUZZ_SECS=0 — build only, skipping runs"
+    exit 0
+fi
+
+for target in wrap_text truncate_line render_text; do
+    echo "[pre-push] fuzzing $target for ${secs}s"
+    if ! cargo fuzz run "$target" -- -max_total_time="$secs" >/dev/null 2>&1; then
+        echo "[pre-push] FAIL: $target found a crash — reproduce with:"
+        echo "           cargo fuzz run $target fuzz/artifacts/$target/<crash-file>"
+        exit 1
+    fi
+done
+
+echo "[pre-push] fuzz smoke passed"

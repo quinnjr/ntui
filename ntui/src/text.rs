@@ -122,6 +122,37 @@ mod tests {
         assert_eq!(truncate_line("multi\nline", 10), "multi");
     }
 
+    /// Mirrors the `wrap_text` / `truncate_line` fuzz targets on adversarial
+    /// seeds so the invariants are checked by `cargo test`, not only the fuzzer.
+    #[test]
+    fn wrap_and_truncate_invariants_hold() {
+        let seeds = [
+            "",
+            " ",
+            "\n",
+            "\t",
+            "a\u{0301}",              // combining mark
+            "😀😀😀",                 // multi-byte
+            "日本語のテキスト",       // CJK
+            "  lots   of   spaces  ", // space runs
+            "line1\nline2\nline3",
+            "\u{1b}[2J control esc",
+            &"x".repeat(300),
+        ];
+        for s in seeds {
+            for w in [0usize, 1, 2, 5, 40, 300] {
+                let effective = w.max(1);
+                for line in wrap_text(s, w) {
+                    assert!(line.chars().count() <= effective, "wrap {s:?} w={w}");
+                    assert!(!line.contains('\n'));
+                }
+                let t = truncate_line(s, w);
+                assert!(t.chars().count() <= w, "truncate {s:?} w={w}");
+                assert!(!t.contains('\n'));
+            }
+        }
+    }
+
     #[test]
     fn truncate_clips_with_ellipsis() {
         assert_eq!(truncate_line("hello world", 7), "hello …");

@@ -1,0 +1,36 @@
+[package]
+name = "ntui-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2024"
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+ntui = { path = "../ntui", features = ["fuzz"] }
+
+[[bin]]
+name = "wrap_text"
+path = "fuzz_targets/wrap_text.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "truncate_line"
+path = "fuzz_targets/truncate_line.rs"
+test = false
+doc = false
+bench = false
+
+[[bin]]
+name = "render_text"
+path = "fuzz_targets/render_text.rs"
+test = false
+doc = false
+bench = false
+
+# cargo-fuzz convention: the fuzz crate is its own workspace.
+[workspace]
