@@ -4,19 +4,19 @@ pub(crate) fn wrap_text(content: &str, max_width: usize) -> Vec<String> {
     let mut lines = Vec::new();
     for raw in content.split('\n') {
         let mut line = String::new();
+        let mut line_len = 0usize; // char length of `line`, tracked incrementally
         let mut first = true;
         for word in raw.split(' ').filter(|w| !w.is_empty()) {
             let word_len = word.chars().count();
-            let line_len = line.chars().count();
-            if first || line_len + 1 + word_len <= max_width {
-                if !first {
-                    line.push(' ');
-                }
-                push_word(&mut lines, &mut line, word, max_width);
+            if first {
+                line_len = push_word(&mut lines, &mut line, 0, word, max_width);
                 first = false;
+            } else if line_len + 1 + word_len <= max_width {
+                line.push(' ');
+                line_len = push_word(&mut lines, &mut line, line_len + 1, word, max_width);
             } else {
                 lines.push(std::mem::take(&mut line));
-                push_word(&mut lines, &mut line, word, max_width);
+                line_len = push_word(&mut lines, &mut line, 0, word, max_width);
             }
         }
         lines.push(line);
@@ -24,8 +24,25 @@ pub(crate) fn wrap_text(content: &str, max_width: usize) -> Vec<String> {
     lines
 }
 
-/// Append `word` to `line`, hard-breaking into full lines while it exceeds max.
-fn push_word(lines: &mut Vec<String>, line: &mut String, word: &str, max: usize) {
+/// Append `word` to `line` (whose current char length is `line_len`), hard-
+/// breaking into full `max`-width lines while the combined length exceeds max.
+/// Returns the char length of the resulting trailing `line`.
+///
+/// The common case (word fits without breaking) is a plain `push_str` — no
+/// re-scan of the existing line — so wrapping a paragraph is linear in its
+/// length rather than quadratic in line length.
+fn push_word(
+    lines: &mut Vec<String>,
+    line: &mut String,
+    line_len: usize,
+    word: &str,
+    max: usize,
+) -> usize {
+    let word_len = word.chars().count();
+    if line_len + word_len <= max {
+        line.push_str(word);
+        return line_len + word_len;
+    }
     let mut current: Vec<char> = line.chars().collect();
     current.extend(word.chars());
     while current.len() > max {
@@ -33,7 +50,9 @@ fn push_word(lines: &mut Vec<String>, line: &mut String, word: &str, max: usize)
         lines.push(current.into_iter().collect());
         current = rest;
     }
+    let len = current.len();
     *line = current.into_iter().collect();
+    len
 }
 
 pub(crate) fn truncate_line(content: &str, max_width: usize) -> String {

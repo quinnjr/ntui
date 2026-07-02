@@ -74,3 +74,18 @@ pub use ntui_macros::{component, element};
 pub use props::{Dimension, FlexDirection, TextProps, TextWrap, ViewProps};
 pub use runtime::render;
 pub use style::{Attrs, BorderStyle, Color, Weight};
+
+/// Internal, unstable surface for benchmarks only (enabled by the `bench` feature).
+/// Not covered by semver; do not use.
+#[cfg(feature = "bench")]
+#[doc(hidden)]
+pub mod __bench {
+    /// See `crate::text::wrap_text`.
+    pub fn wrap_text(content: &str, max_width: usize) -> Vec<String> {
+        crate::text::wrap_text(content, max_width)
+    }
+    /// See `crate::text::truncate_line`.
+    pub fn truncate_line(content: &str, max_width: usize) -> String {
+        crate::text::truncate_line(content, max_width)
+    }
+}

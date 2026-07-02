@@ -219,21 +219,17 @@ impl FiberTree {
     }
 
     /// Resolve a fiber's context by walking ancestors, computed fresh each
-    /// render so it's always current. Root-first insertion means the
-    /// nearest provider (closest ancestor) overwrites farther ones.
+    /// render so it's always current. Walking child→root and keeping the
+    /// first entry per type (`or_insert`) means the nearest provider wins,
+    /// in a single pass with no intermediate chain allocation.
     pub(crate) fn context_for(&self, id: FiberId) -> Rc<ContextMap> {
-        let mut chain = Vec::new();
+        let mut map = ContextMap::new();
         let mut cur = self.get(id).parent;
         while let Some(p) = cur {
-            chain.push(p);
-            cur = self.get(p).parent;
-        }
-        let mut map = ContextMap::new();
-        for p in chain.into_iter().rev() {
-            // root-first so nearest overwrites
             if let FiberKind::Provider { type_id, value } = &self.get(p).kind {
-                map.insert(*type_id, value.clone());
+                map.entry(*type_id).or_insert_with(|| value.clone());
             }
+            cur = self.get(p).parent;
         }
         Rc::new(map)
     }
