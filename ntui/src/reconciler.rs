@@ -52,12 +52,16 @@ impl FiberTree {
         rt: &RuntimeHandle,
     ) {
         let old = std::mem::take(&mut self.get_mut(parent).children);
+        let old_order = old.clone();
         let mut old_keyed: HashMap<String, FiberId> = HashMap::new();
         let mut old_indexed: Vec<Option<FiberId>> = Vec::new();
         for id in old {
             match self.get(id).key.clone() {
                 Some(k) => {
-                    old_keyed.insert(k, id);
+                    if let Some(displaced) = old_keyed.insert(k, id) {
+                        // Duplicate sibling keys: keep the last occurrence, drop the earlier fiber.
+                        self.unmount(displaced);
+                    }
                 }
                 None => old_indexed.push(Some(id)),
             }
@@ -94,9 +98,15 @@ impl FiberTree {
         for id in old_indexed.into_iter().flatten() {
             self.unmount(id);
         }
-        self.get_mut(parent).children = next;
-        // Note: reorder of matched children is structural — flag layout.
-        self.layout_dirty = true;
+        self.get_mut(parent).children = next.clone();
+        // A pure reorder of surviving children is structural even though no
+        // individual fiber's props changed, so it isn't caught by the
+        // `changed` guards in `update_fiber`. Mounts/unmounts already flag
+        // layout via `mount_element`/`unmount`; only flag here when the
+        // surviving children's order actually moved.
+        if next != old_order {
+            self.layout_dirty = true;
+        }
     }
 
     fn same_kind(&self, id: FiberId, node: &Node) -> bool {
@@ -272,5 +282,243 @@ mod tests {
         keys.set(vec!["b".to_string()]);
         tree.render_fiber(root, &rt);
         assert!(tree.len() < count_before);
+    }
+
+    // ---- regression tests: duplicate keys, kind mismatch, unkeyed
+    // matching, in-place prop updates, and provider value swaps. ----
+
+    struct KeyedList;
+    #[derive(Clone, PartialEq, Default)]
+    struct KeyedListProps {
+        initial: Vec<String>,
+        keys_out: Shared<Option<State<Vec<String>>>>,
+    }
+    impl Component for KeyedList {
+        type Props = KeyedListProps;
+        fn render(props: &KeyedListProps, hooks: &mut Hooks) -> Element {
+            let keys = hooks.use_state(|| props.initial.clone());
+            *props.keys_out.lock() = Some(keys.clone());
+            Element::fragment(
+                keys.get()
+                    .into_iter()
+                    .map(|k| {
+                        Element::component::<Item>(ItemProps {
+                            id: k.clone(),
+                            render_log: Shared::default(),
+                        })
+                        .with_key(k)
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    fn mount_keyed_list(initial: Vec<String>) -> (FiberTree, RuntimeHandle, KeyedListProps, usize) {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = KeyedListProps {
+            initial,
+            keys_out: Shared::default(),
+        };
+        let root = tree.mount_root(Element::component::<KeyedList>(props.clone()), &rt);
+        (tree, rt, props, root)
+    }
+
+    #[test]
+    fn duplicate_keys_do_not_leak_fibers() {
+        let (mut tree, rt, props, root) = mount_keyed_list(vec!["x".to_string(), "x".to_string()]);
+
+        let keys = props.keys_out.lock().clone().unwrap();
+        keys.set(vec!["x".to_string()]);
+        tree.render_fiber(root, &rt);
+        let len_after_shrink = tree.len();
+
+        // component fiber + fragment fiber + single Item component fiber +
+        // its Text child == 4.
+        assert_eq!(len_after_shrink, 4);
+
+        // Repeated no-op re-renders must not leak fibers (monotonic growth).
+        for _ in 0..5 {
+            keys.set(vec!["x".to_string()]);
+            tree.render_fiber(root, &rt);
+            assert_eq!(tree.len(), len_after_shrink);
+        }
+    }
+
+    struct ToggleKind;
+    #[derive(Clone, PartialEq, Default)]
+    struct ToggleKindProps {
+        is_text_out: Shared<Option<State<bool>>>,
+    }
+    impl Component for ToggleKind {
+        type Props = ToggleKindProps;
+        fn render(props: &ToggleKindProps, hooks: &mut Hooks) -> Element {
+            let is_text = hooks.use_state(|| true);
+            *props.is_text_out.lock() = Some(is_text.clone());
+            let child = if is_text.get() {
+                Element::text(TextProps {
+                    content: "t".into(),
+                    ..Default::default()
+                })
+                .with_key("k")
+            } else {
+                Element::view(crate::props::ViewProps::default(), vec![]).with_key("k")
+            };
+            Element::fragment(vec![child])
+        }
+    }
+
+    #[test]
+    fn keyed_kind_mismatch_remounts() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = ToggleKindProps::default();
+        let root = tree.mount_root(Element::component::<ToggleKind>(props.clone()), &rt);
+        let fragment = tree.get(root).children[0];
+        let old_id = tree.get(fragment).children[0];
+        assert_eq!(tree.kind_name(old_id), "Text");
+
+        let is_text = props.is_text_out.lock().clone().unwrap();
+        is_text.set(false);
+        tree.render_fiber(root, &rt);
+
+        let new_id = tree.get(fragment).children[0];
+        assert_ne!(new_id, old_id);
+        assert!(!tree.contains(old_id));
+        assert_eq!(tree.kind_name(new_id), "View");
+    }
+
+    struct UnkeyedList;
+    #[derive(Clone, PartialEq, Default)]
+    struct UnkeyedListProps {
+        count_out: Shared<Option<State<usize>>>,
+    }
+    impl Component for UnkeyedList {
+        type Props = UnkeyedListProps;
+        fn render(props: &UnkeyedListProps, hooks: &mut Hooks) -> Element {
+            let count = hooks.use_state(|| 3usize);
+            *props.count_out.lock() = Some(count.clone());
+            Element::fragment(
+                (0..count.get())
+                    .map(|i| {
+                        Element::text(TextProps {
+                            content: i.to_string(),
+                            ..Default::default()
+                        })
+                    })
+                    .collect(),
+            )
+        }
+    }
+
+    #[test]
+    fn unkeyed_children_match_by_index() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = UnkeyedListProps::default();
+        let root = tree.mount_root(Element::component::<UnkeyedList>(props.clone()), &rt);
+        let fragment = tree.get(root).children[0];
+        let before = tree.get(fragment).children.clone();
+        assert_eq!(before.len(), 3);
+
+        let count = props.count_out.lock().clone().unwrap();
+        count.set(3);
+        tree.render_fiber(root, &rt);
+        assert_eq!(tree.get(fragment).children, before);
+
+        count.set(2);
+        tree.render_fiber(root, &rt);
+        let after = tree.get(fragment).children.clone();
+        assert_eq!(after, vec![before[0], before[1]]);
+        assert!(!tree.contains(before[2]));
+    }
+
+    struct PaddedView;
+    #[derive(Clone, PartialEq, Default)]
+    struct PaddedViewProps {
+        padding_out: Shared<Option<State<u16>>>,
+    }
+    impl Component for PaddedView {
+        type Props = PaddedViewProps;
+        fn render(props: &PaddedViewProps, hooks: &mut Hooks) -> Element {
+            let padding = hooks.use_state(|| 0u16);
+            *props.padding_out.lock() = Some(padding.clone());
+            Element::view(
+                crate::props::ViewProps {
+                    padding: padding.get(),
+                    ..Default::default()
+                },
+                vec![Element::text(TextProps {
+                    content: "child".into(),
+                    ..Default::default()
+                })],
+            )
+        }
+    }
+
+    #[test]
+    fn view_prop_update_in_place_sets_layout_dirty() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = PaddedViewProps::default();
+        let root = tree.mount_root(Element::component::<PaddedView>(props.clone()), &rt);
+        let view_id = tree.get(root).children[0];
+
+        let padding = props.padding_out.lock().clone().unwrap();
+        tree.layout_dirty = false;
+        padding.set(5);
+        tree.render_fiber(root, &rt);
+        assert_eq!(tree.get(root).children[0], view_id);
+        assert!(tree.layout_dirty);
+
+        // No-op re-render (no state change): must not flag layout dirty.
+        tree.layout_dirty = false;
+        tree.render_fiber(root, &rt);
+        assert!(!tree.layout_dirty);
+    }
+
+    struct ProviderHost;
+    #[derive(Clone, PartialEq, Default)]
+    struct ProviderHostProps {
+        value_out: Shared<Option<State<u32>>>,
+    }
+    impl Component for ProviderHost {
+        type Props = ProviderHostProps;
+        fn render(props: &ProviderHostProps, hooks: &mut Hooks) -> Element {
+            let value = hooks.use_state(|| 1u32);
+            *props.value_out.lock() = Some(value.clone());
+            Element::provider(
+                value.get(),
+                vec![Element::text(TextProps {
+                    content: "child".into(),
+                    ..Default::default()
+                })],
+            )
+        }
+    }
+
+    #[test]
+    fn provider_value_swap_reconciles_children() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = ProviderHostProps::default();
+        let root = tree.mount_root(Element::component::<ProviderHost>(props.clone()), &rt);
+        let provider_id = tree.get(root).children[0];
+        assert_eq!(tree.kind_name(provider_id), "Provider");
+
+        let value = props.value_out.lock().clone().unwrap();
+        value.set(2);
+        tree.render_fiber(root, &rt);
+
+        assert_eq!(tree.get(root).children[0], provider_id);
+        let crate::fiber::FiberKind::Provider { value: v, .. } = &tree.get(provider_id).kind else {
+            panic!("expected Provider fiber");
+        };
+        assert_eq!(*v.downcast_ref::<u32>().unwrap(), 2);
     }
 }
