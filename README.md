@@ -1,5 +1,7 @@
 # ntui
 
+[![CI](https://github.com/quinnjr/ntui/actions/workflows/ci.yml/badge.svg)](https://github.com/quinnjr/ntui/actions/workflows/ci.yml)
+
 An Ink-style TUI library for Rust: build fullscreen terminal UIs out of
 components and hooks, with a React-style retained fiber tree, flexbox layout
 (via `taffy`), and minimal-diff terminal output (via `crossterm`).
