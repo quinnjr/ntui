@@ -5,15 +5,17 @@
 //! guard in the paint layer). `w`/`h` are `u8` to keep the grid bounded.
 use libfuzzer_sys::fuzz_target;
 use ntui::testing::TestTerminal;
-use ntui::{Element, Hooks, component, element};
+use ntui::{component, element};
 
 #[derive(Clone, PartialEq, Default)]
 struct ShowProps {
     text: String,
 }
 
+// `#[component]` rewrites the signature to fully-qualified `::ntui` paths, so
+// the type names are written inline rather than imported (avoids unused-import).
 #[component]
-fn Show(props: &ShowProps, _hooks: &mut Hooks) -> Element {
+fn Show(props: &ShowProps, _hooks: &mut ntui::Hooks) -> ntui::Element {
     element!(Text(content: props.text.clone()))
 }
 

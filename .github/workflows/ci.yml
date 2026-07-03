@@ -56,9 +56,13 @@ jobs:
       - uses: actions/checkout@v4
       - name: Install Rust (nightly)
         uses: dtolnay/rust-toolchain@nightly
+        with:
+          components: clippy
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: fuzz
+      - name: clippy (fuzz crate)
+        run: cargo clippy --manifest-path fuzz/Cargo.toml --all-targets -- -D warnings
       - name: Install cargo-fuzz
         uses: taiki-e/install-action@v2
         with:
