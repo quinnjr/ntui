@@ -4,6 +4,7 @@ version = "0.1.0"
 edition = "2024"
 description = "An Ink-style TUI library for Rust: components, hooks, flexbox layout, and fullscreen rendering."
 license = "MIT OR Apache-2.0"
+repository = "https://github.com/quinnjr/ntui"
 
 [dependencies]
 crossterm = { version = "0.29.0", features = ["event-stream"] }
