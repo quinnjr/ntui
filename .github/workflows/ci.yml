@@ -68,7 +68,8 @@ jobs:
         with:
           tool: cargo-fuzz
       - name: fuzz smoke (${{ matrix.target }}, 60s)
-        run: cargo fuzz run ${{ matrix.target }} -- -max_total_time=60
+        # Pin the gnu target: the sanitizer is incompatible with musl's static libc.
+        run: cargo fuzz run ${{ matrix.target }} --target x86_64-unknown-linux-gnu -- -max_total_time=60
       - name: Upload crash artifacts
         if: failure()
         uses: actions/upload-artifact@v4
