@@ -72,6 +72,14 @@ pub(crate) fn compute_layout(tree: &mut FiberTree, width: u16, height: u16) {
             }),
             _ => None,
         };
+        // Feed a scroll box its measured sizes so its offset stays clamped and
+        // bottom-following. `content_size` includes the overflowing children.
+        if let FiberKind::View(props) = &fiber.kind
+            && let Some(scroll) = &props.scroll
+        {
+            let content = l.content_size.height.round() as u16;
+            scroll.set_metrics(content, rect.height);
+        }
     }
     tree.layout_dirty = false;
 }

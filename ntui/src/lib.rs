@@ -69,9 +69,12 @@ pub use hooks::Hooks;
 pub use hooks::app::AppHandle;
 pub use hooks::effect::Cleanup;
 pub use hooks::input::{InputCtx, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+pub use hooks::scroll::Scroll;
 pub use hooks::state::State;
 pub use ntui_macros::{component, element};
-pub use props::{Dimension, FlexDirection, TextProps, TextWrap, ViewProps};
+pub use props::{
+    AlignItems, Dimension, FlexDirection, JustifyContent, Overflow, TextProps, TextWrap, ViewProps,
+};
 pub use runtime::render;
 pub use style::{Attrs, BorderStyle, Color, Weight};
 

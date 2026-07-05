@@ -4,6 +4,7 @@ pub mod app;
 pub mod context;
 pub mod effect;
 pub mod input;
+pub mod scroll;
 pub mod state;
 pub mod task;
 

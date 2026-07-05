@@ -1,3 +1,4 @@
+use crate::hooks::scroll::Scroll;
 use crate::style::{BorderStyle, Color, Weight};
 
 /// A size along one axis: automatically sized to content, a fixed number of
@@ -79,6 +80,10 @@ pub struct ViewProps {
     pub background: Color,
     /// How children exceeding the box are handled (clip / scroll).
     pub overflow: Overflow,
+    /// Scroll position for an [`Overflow::Scroll`] box. Obtain via
+    /// [`use_scroll`](crate::Hooks::use_scroll); layout feeds content/viewport
+    /// sizes back into it and paint applies its offset.
+    pub scroll: Option<Scroll>,
 }
 
 /// How text overflowing its box width is handled.

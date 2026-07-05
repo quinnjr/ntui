@@ -12,7 +12,7 @@ pub(crate) fn paint(tree: &FiberTree, buf: &mut Buffer) {
             width: buf.width(),
             height: buf.height(),
         };
-        paint_fiber(tree, root, buf, full);
+        paint_fiber(tree, root, buf, full, (0, 0));
     }
 }
 
@@ -33,29 +33,45 @@ fn intersect(a: Rect, b: Rect) -> Rect {
 }
 
 /// Write a cell only if it lands inside the clip region (and the buffer).
-fn put(buf: &mut Buffer, clip: Rect, x: u16, y: u16, cell: Cell) {
-    if x >= clip.x
-        && y >= clip.y
-        && x < clip.x.saturating_add(clip.width)
-        && y < clip.y.saturating_add(clip.height)
-    {
-        buf.set(x, y, cell);
+/// Coordinates are `i32` so content scrolled above/left of the origin is
+/// simply discarded rather than wrapping around.
+fn put(buf: &mut Buffer, clip: Rect, x: i32, y: i32, cell: Cell) {
+    let (cx, cy) = (clip.x as i32, clip.y as i32);
+    if x >= cx && y >= cy && x < cx + clip.width as i32 && y < cy + clip.height as i32 {
+        buf.set(x as u16, y as u16, cell);
     }
 }
 
-fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect) {
+/// The on-screen portion of a rect whose top-left may be negative (scrolled
+/// above/left of the viewport), expressed as a `u16` clip rect.
+fn onscreen_rect(ox: i32, oy: i32, w: u16, h: u16) -> Rect {
+    let x0 = ox.max(0);
+    let y0 = oy.max(0);
+    let x1 = (ox + w as i32).max(0);
+    let y1 = (oy + h as i32).max(0);
+    Rect {
+        x: x0.min(u16::MAX as i32) as u16,
+        y: y0.min(u16::MAX as i32) as u16,
+        width: (x1 - x0).min(u16::MAX as i32) as u16,
+        height: (y1 - y0).min(u16::MAX as i32) as u16,
+    }
+}
+
+fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect, offset: (i32, i32)) {
     let fiber = tree.get(id);
+    let r = fiber.layout;
+    // This fiber's on-screen top-left, after ancestor scroll offsets.
+    let (ox, oy) = (r.x as i32 + offset.0, r.y as i32 + offset.1);
     match &fiber.kind {
         FiberKind::View(props) => {
-            let r = fiber.layout;
             if props.background != Color::Reset {
-                for y in r.y..r.y.saturating_add(r.height) {
-                    for x in r.x..r.x.saturating_add(r.width) {
+                for dy in 0..r.height as i32 {
+                    for dx in 0..r.width as i32 {
                         put(
                             buf,
                             clip,
-                            x,
-                            y,
+                            ox + dx,
+                            oy + dy,
                             Cell {
                                 bg: props.background,
                                 ..Cell::default()
@@ -68,7 +84,10 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect) {
                 draw_border(
                     buf,
                     clip,
-                    r,
+                    ox,
+                    oy,
+                    r.width,
+                    r.height,
                     props.border_style,
                     props.border_color,
                     props.background,
@@ -76,7 +95,6 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect) {
             }
         }
         FiberKind::Text(props) => {
-            let r = fiber.layout;
             // Reuse the lines wrapped by `compute_layout` at the final resolved
             // width; fall back to wrapping here only if layout hasn't run.
             let fallback;
@@ -98,10 +116,14 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect) {
                     // Sanitize application-supplied control characters (ESC, BEL,
                     // C0/C1, DEL) to prevent terminal escape-sequence injection.
                     let ch = if ch.is_control() { ' ' } else { ch };
-                    let (x, y) = (r.x.saturating_add(dx as u16), r.y.saturating_add(dy as u16));
+                    let (x, y) = (ox + dx as i32, oy + dy as i32);
                     // keep the background an ancestor View already painted
-                    let bg = if x < buf.width() && y < buf.height() {
-                        buf.get(x, y).bg
+                    let bg = if x >= 0
+                        && y >= 0
+                        && (x as u16) < buf.width()
+                        && (y as u16) < buf.height()
+                    {
+                        buf.get(x as u16, y as u16).bg
                     } else {
                         Color::Reset
                     };
@@ -123,15 +145,26 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect) {
         _ => {}
     }
 
-    // A Clip/Scroll View confines its descendants to its own box.
-    let child_clip = match &fiber.kind {
-        FiberKind::View(props) if props.overflow != Overflow::Visible => {
-            intersect(clip, fiber.layout)
+    // A Scroll View shifts its descendants up by its offset; Clip/Scroll views
+    // also confine descendants to their on-screen rect.
+    let (child_clip, child_offset) = match &fiber.kind {
+        FiberKind::View(props) => {
+            let clip = if props.overflow != Overflow::Visible {
+                intersect(clip, onscreen_rect(ox, oy, r.width, r.height))
+            } else {
+                clip
+            };
+            let scroll_dy = props
+                .scroll
+                .as_ref()
+                .map(|s| s.offset() as i32)
+                .unwrap_or(0);
+            (clip, (offset.0, offset.1 - scroll_dy))
         }
-        _ => clip,
+        _ => (clip, offset),
     };
     for c in &fiber.children {
-        paint_fiber(tree, *c, buf, child_clip);
+        paint_fiber(tree, *c, buf, child_clip, child_offset);
     }
 }
 
@@ -145,29 +178,37 @@ fn border_chars(style: BorderStyle) -> [char; 6] {
     }
 }
 
-fn draw_border(buf: &mut Buffer, clip: Rect, r: Rect, style: BorderStyle, color: Color, bg: Color) {
-    let [h, v, tl, tr, bl, br] = border_chars(style);
-    let (x2, y2) = (
-        r.x.saturating_add(r.width - 1),
-        r.y.saturating_add(r.height - 1),
-    );
+#[allow(clippy::too_many_arguments)]
+fn draw_border(
+    buf: &mut Buffer,
+    clip: Rect,
+    ox: i32,
+    oy: i32,
+    w: u16,
+    h: u16,
+    style: BorderStyle,
+    color: Color,
+    bg: Color,
+) {
+    let [hc, vc, tl, tr, bl, br] = border_chars(style);
+    let (x2, y2) = (ox + w as i32 - 1, oy + h as i32 - 1);
     let cell = |ch| Cell {
         ch,
         fg: color,
         bg,
         attrs: Attrs::default(),
     };
-    for x in r.x + 1..x2 {
-        put(buf, clip, x, r.y, cell(h));
-        put(buf, clip, x, y2, cell(h));
+    for dx in 1..w as i32 - 1 {
+        put(buf, clip, ox + dx, oy, cell(hc));
+        put(buf, clip, ox + dx, y2, cell(hc));
     }
-    for y in r.y + 1..y2 {
-        put(buf, clip, r.x, y, cell(v));
-        put(buf, clip, x2, y, cell(v));
+    for dy in 1..h as i32 - 1 {
+        put(buf, clip, ox, oy + dy, cell(vc));
+        put(buf, clip, x2, oy + dy, cell(vc));
     }
-    put(buf, clip, r.x, r.y, cell(tl));
-    put(buf, clip, x2, r.y, cell(tr));
-    put(buf, clip, r.x, y2, cell(bl));
+    put(buf, clip, ox, oy, cell(tl));
+    put(buf, clip, x2, oy, cell(tr));
+    put(buf, clip, ox, y2, cell(bl));
     put(buf, clip, x2, y2, cell(br));
 }
 
@@ -395,5 +436,58 @@ mod tests {
         let clipped = render_at(Overflow::Clip);
         assert_eq!(clipped.get(0, 2).ch, ' ', "spill clipped away");
         assert_eq!(clipped.get(0, 0).ch, 'a', "visible rows intact");
+    }
+
+    #[test]
+    fn scroll_offset_and_bottom_follow() {
+        use crate::hooks::scroll::Scroll;
+
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let scroll = Scroll::new(0, rt.wake.clone());
+
+        // Five 1-row lines in a 2-tall scroll box (content 5, viewport 2).
+        let render = |scroll: &Scroll| -> String {
+            let (rt, _rx) = RuntimeHandle::test_handle();
+            let mut tree = FiberTree::new();
+            let rows: Vec<Element> = (0..5)
+                .map(|i| {
+                    Element::text(TextProps {
+                        content: format!("row{i}"),
+                        ..Default::default()
+                    })
+                })
+                .collect();
+            tree.mount_root(
+                Element::view(
+                    ViewProps {
+                        overflow: Overflow::Scroll,
+                        scroll: Some(scroll.clone()),
+                        flex_direction: FlexDirection::Column,
+                        width: Dimension::Cells(4),
+                        height: Dimension::Cells(2),
+                        ..Default::default()
+                    },
+                    rows,
+                ),
+                &rt,
+            );
+            compute_layout(&mut tree, 4, 2);
+            let mut buf = Buffer::new(4, 2);
+            paint(&tree, &mut buf);
+            buf.to_text()
+        };
+
+        // First layout starts pinned to the bottom (chat-follow): last two rows.
+        assert_eq!(render(&scroll), "row3\nrow4");
+        assert_eq!(scroll.max_offset(), 3);
+        assert!(scroll.at_bottom());
+
+        // Scrolling to the top reveals the first two rows.
+        scroll.to_top();
+        assert_eq!(render(&scroll), "row0\nrow1");
+
+        // A middle offset shows the interior window.
+        scroll.scroll_to(1);
+        assert_eq!(render(&scroll), "row1\nrow2");
     }
 }
