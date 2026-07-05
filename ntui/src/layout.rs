@@ -24,8 +24,8 @@ pub(crate) fn compute_layout(tree: &mut FiberTree, width: u16, height: u16) {
         .new_with_children(
             Style {
                 size: Size {
-                    width: percent(1.0),
-                    height: percent(1.0),
+                    width: percent(1.0f32),
+                    height: percent(1.0f32),
                 },
                 ..Default::default()
             },
@@ -127,9 +127,9 @@ fn view_style(p: &ViewProps) -> Style {
         padding: taffy::Rect::length(p.padding as f32),
         margin: taffy::Rect::length(p.margin as f32),
         border: if p.border_style == BorderStyle::None {
-            taffy::Rect::length(0.0)
+            taffy::Rect::length(0.0f32)
         } else {
-            taffy::Rect::length(1.0)
+            taffy::Rect::length(1.0f32)
         },
         size: Size {
             width: dim(p.width),

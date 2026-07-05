@@ -65,7 +65,7 @@ fn Chat(hooks: &mut ntui::Hooks) -> ntui::Element {
 
     element! {
         View(flex_direction: FlexDirection::Column, padding: 1) {
-            View(flex_direction: FlexDirection::Column, flex_grow: 1.0, gap: 1) {
+            View(flex_direction: FlexDirection::Column, flex_grow: 1.0_f32, gap: 1) {
                 #(messages.get().into_iter().map(|msg| element! {
                     View(flex_direction: FlexDirection::Column, key: msg.id.to_string()) {
                         Text(content: msg.who, weight: Weight::Bold,
