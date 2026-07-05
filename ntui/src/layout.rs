@@ -3,7 +3,10 @@ use std::collections::HashMap;
 use taffy::prelude::*;
 
 use crate::fiber::{FiberId, FiberKind, FiberTree, Rect};
-use crate::props::{Dimension as NDim, FlexDirection as NFlex, TextWrap, ViewProps};
+use crate::props::{
+    AlignItems as NAlign, Dimension as NDim, FlexDirection as NFlex, JustifyContent as NJustify,
+    Overflow as NOverflow, TextWrap, ViewProps,
+};
 use crate::style::BorderStyle;
 use crate::text::{truncate_line, wrap_text};
 
@@ -113,12 +116,31 @@ fn build_nodes(
 }
 
 fn view_style(p: &ViewProps) -> Style {
+    let overflow = match p.overflow {
+        NOverflow::Visible => taffy::Overflow::Visible,
+        NOverflow::Clip => taffy::Overflow::Clip,
+        NOverflow::Scroll => taffy::Overflow::Scroll,
+    };
     Style {
         display: Display::Flex,
         flex_direction: match p.flex_direction {
             NFlex::Row => FlexDirection::Row,
             NFlex::Column => FlexDirection::Column,
         },
+        justify_content: Some(match p.justify_content {
+            NJustify::Start => JustifyContent::START,
+            NJustify::End => JustifyContent::END,
+            NJustify::Center => JustifyContent::CENTER,
+            NJustify::SpaceBetween => JustifyContent::SPACE_BETWEEN,
+            NJustify::SpaceAround => JustifyContent::SPACE_AROUND,
+            NJustify::SpaceEvenly => JustifyContent::SPACE_EVENLY,
+        }),
+        align_items: Some(match p.align_items {
+            NAlign::Stretch => AlignItems::STRETCH,
+            NAlign::Start => AlignItems::START,
+            NAlign::End => AlignItems::END,
+            NAlign::Center => AlignItems::CENTER,
+        }),
         flex_grow: p.flex_grow,
         gap: Size {
             width: length(p.gap as f32),
@@ -135,6 +157,12 @@ fn view_style(p: &ViewProps) -> Style {
             width: dim(p.width),
             height: dim(p.height),
         },
+        // Clip/Scroll containers must not reserve a scrollbar gutter.
+        overflow: taffy::Point {
+            x: overflow,
+            y: overflow,
+        },
+        scrollbar_width: 0.0f32,
         ..Default::default()
     }
 }
