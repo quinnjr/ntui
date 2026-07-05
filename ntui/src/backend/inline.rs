@@ -30,6 +30,9 @@ pub struct InlineBackend {
     out: BufWriter<Stdout>,
 }
 
+// Real-terminal I/O: requires a TTY, exercised by the examples and excluded
+// from coverage. The inline commit/present logic is unit-tested via RecordingSink.
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl InlineBackend {
     pub fn new() -> Self {
         InlineBackend {
@@ -39,11 +42,13 @@ impl InlineBackend {
 }
 
 impl Default for InlineBackend {
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl InlineSink for InlineBackend {
     fn size(&self) -> io::Result<(u16, u16)> {
         terminal::size()

@@ -121,3 +121,172 @@ impl<'a> Hooks<'a> {
         )
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use crate::component::Component;
+    use crate::element::Element;
+    use crate::fiber::FiberTree;
+    use crate::hooks::{Hooks, RuntimeHandle};
+    use crate::props::ViewProps;
+    use crate::test_util::Shared;
+
+    type RenderFn = fn(&Shared<u8>, &mut Hooks) -> Element;
+
+    // Drives a component through two renders, flipping `phase` between them so a
+    // component can call different hooks on the second render (a violation).
+    fn drive(render: RenderFn, phase: Shared<u8>) {
+        #[derive(Clone, PartialEq, Default)]
+        struct P {
+            phase: Shared<u8>,
+            f: Shared<Option<RenderFn>>,
+        }
+        struct C;
+        impl Component for C {
+            type Props = P;
+            fn render(props: &P, hooks: &mut Hooks) -> Element {
+                let f = (*props.f.lock()).unwrap();
+                f(&props.phase, hooks)
+            }
+        }
+        let (rt, rx) = RuntimeHandle::test_handle();
+        std::mem::forget(rx);
+        let mut tree = FiberTree::new();
+        let props = P {
+            phase: phase.clone(),
+            f: Shared::default(),
+        };
+        *props.f.lock() = Some(render);
+        let root = tree.mount_root(Element::component::<C>(props.clone()), &rt);
+        *phase.lock() = 1; // second render takes the other branch
+        tree.render_fiber(root, &rt);
+    }
+
+    #[test]
+    #[should_panic(expected = "more hooks called than in the previous render")]
+    fn extra_hook_on_rerender_panics() {
+        drive(
+            |phase, hooks| {
+                hooks.use_state(|| 0);
+                if *phase.lock() == 1 {
+                    hooks.use_state(|| 0); // a second hook only on rerender
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "hooks this render but")]
+    fn fewer_hooks_on_rerender_panics() {
+        drive(
+            |phase, hooks| {
+                hooks.use_state(|| 0);
+                if *phase.lock() == 0 {
+                    hooks.use_state(|| 0); // present only on the first render
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    // Each swap replaces the slot-0 hook type on rerender, tripping the
+    // `let HookSlot::X = slot else { hook_mismatch(..) }` arm of the named hook.
+    #[test]
+    #[should_panic(expected = "hook order violation")]
+    fn use_effect_slot_type_mismatch_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_state(|| 0);
+                } else {
+                    hooks.use_effect((), || {});
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "hook order violation")]
+    fn use_state_slot_type_mismatch_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_effect((), || {});
+                } else {
+                    hooks.use_state(|| 0);
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "hook order violation")]
+    fn use_input_slot_type_mismatch_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_state(|| 0);
+                } else {
+                    hooks.use_input(|_, _| {});
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "hook order violation")]
+    fn use_future_slot_type_mismatch_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_state(|| 0);
+                } else {
+                    hooks.use_future(|| async {});
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "use_state type changed")]
+    fn use_state_type_change_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_state(|| 0i32);
+                } else {
+                    hooks.use_state(String::new);
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "use_effect deps type changed")]
+    fn use_effect_deps_type_change_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_effect(0i32, || {});
+                } else {
+                    hooks.use_effect(String::new(), || {});
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+}

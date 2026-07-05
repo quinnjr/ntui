@@ -13,6 +13,9 @@ pub struct FullscreenBackend {
     out: BufWriter<Stdout>,
 }
 
+// Real-terminal I/O: requires a TTY, so it is exercised by the examples rather
+// than unit tests and excluded from coverage.
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl FullscreenBackend {
     pub fn new() -> Self {
         FullscreenBackend {
@@ -22,11 +25,13 @@ impl FullscreenBackend {
 }
 
 impl Default for FullscreenBackend {
+    #[cfg_attr(coverage_nightly, coverage(off))]
     fn default() -> Self {
         Self::new()
     }
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl Backend for FullscreenBackend {
     fn size(&self) -> io::Result<(u16, u16)> {
         terminal::size()

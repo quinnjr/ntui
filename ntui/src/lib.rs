@@ -1,3 +1,4 @@
+#![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 //! `ntui` is an [Ink](https://github.com/vadimdemedes/ink)-style library for building
 //! terminal UIs in Rust out of declarative components and hooks. Layouts are described
 //! with `View`/`Text` elements (often via the [`element!`] macro) and arranged with a

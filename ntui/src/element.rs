@@ -127,4 +127,18 @@ mod tests {
         let el = Element::fragment(vec![]).with_key("row-1");
         assert_eq!(el.key.as_deref(), Some("row-1"));
     }
+
+    #[test]
+    fn component_renders_through_the_tree() {
+        use crate::fiber::FiberTree;
+        use crate::hooks::RuntimeHandle;
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::component::<Greeting>(GreetingProps { name: "x".into() }),
+            &rt,
+        );
+        // Greeting renders a Text child.
+        assert_eq!(tree.kind_name(tree.get(root).children[0]), "Text");
+    }
 }

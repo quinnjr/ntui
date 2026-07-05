@@ -490,4 +490,41 @@ mod tests {
         scroll.scroll_to(1);
         assert_eq!(render(&scroll), "row1\nrow2");
     }
+
+    #[test]
+    fn double_border_no_root_and_text_past_buffer() {
+        // Painting an empty tree is a no-op.
+        let mut empty = Buffer::new(3, 1);
+        paint(&FiberTree::new(), &mut empty);
+
+        let out = render_to_text(
+            Element::view(
+                ViewProps {
+                    border_style: BorderStyle::Double,
+                    width: Dimension::Cells(4),
+                    height: Dimension::Cells(3),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            4,
+            3,
+        );
+        assert!(out.contains('\u{2554}'), "double corner");
+
+        // Text laid out wider than the buffer exercises the out-of-buffer bg read.
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::text(TextProps {
+                content: "abcdef".into(),
+                ..Default::default()
+            }),
+            &rt,
+        );
+        compute_layout(&mut tree, 6, 1);
+        let mut small = Buffer::new(2, 1);
+        paint(&tree, &mut small);
+        assert_eq!(small.get(0, 0).ch, 'a');
+    }
 }

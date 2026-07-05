@@ -75,4 +75,10 @@ mod tests {
         assert_eq!(be.to_text(), "ok ");
         assert_eq!(be.lifecycle, vec!["enter", "leave"]);
     }
+
+    #[test]
+    fn size_reports_dimensions() {
+        let be = TestBackend::new(7, 3);
+        assert_eq!(be.size().unwrap(), (7, 3));
+    }
 }

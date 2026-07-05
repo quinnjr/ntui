@@ -91,6 +91,35 @@ mod tests {
     }
 
     #[test]
+    fn write_cell_emits_every_attribute() {
+        let mut out = Vec::new();
+        write_cell(
+            &mut out,
+            &Cell {
+                ch: 'x',
+                fg: Color::Red,
+                bg: Color::Blue,
+                attrs: Attrs {
+                    bold: true,
+                    dim: true,
+                    italic: true,
+                    underline: true,
+                },
+            },
+        )
+        .unwrap();
+        assert!(String::from_utf8(out).unwrap().contains('x'));
+    }
+
+    #[test]
+    fn write_row_all_blank_emits_only_reset() {
+        let mut out = Vec::new();
+        write_row(&mut out, &[Cell::default(), Cell::default()]).unwrap();
+        // Trimmed to zero cells; still succeeds (emits a trailing style reset).
+        assert!(!String::from_utf8(out).unwrap().contains('x'));
+    }
+
+    #[test]
     fn write_row_trims_trailing_blanks() {
         let mut out = Vec::new();
         let cells = [

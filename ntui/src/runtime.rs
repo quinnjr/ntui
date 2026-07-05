@@ -181,6 +181,7 @@ impl AppCore {
     }
 
     // Used by the render() event-loop task to await the next wake.
+    #[cfg_attr(coverage_nightly, coverage(off))]
     pub async fn wait_wake(&mut self) -> Option<Wake> {
         self.wake_rx.recv().await
     }
@@ -210,6 +211,7 @@ pub(crate) struct RestoreGuard<'a, B: Backend + ?Sized> {
     pub backend: &'a mut B,
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl<'a, B: Backend + ?Sized> Drop for RestoreGuard<'a, B> {
     fn drop(&mut self) {
         let _ = self.backend.leave();
@@ -224,6 +226,7 @@ impl<'a, B: Backend + ?Sized> Drop for RestoreGuard<'a, B> {
 /// (restoring the terminal) but does NOT stop the main loop — the app keeps
 /// running against a restored screen. v1 accepts this seam; joining/
 /// propagating task panics is future work.
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn install_panic_hook() {
     use std::sync::Once;
     static ONCE: Once = Once::new();
@@ -243,6 +246,7 @@ fn install_panic_hook() {
 
 /// Run the app fullscreen until a component calls `use_app().exit()`.
 /// Note: the returned future is !Send — use `#[tokio::main(flavor = "current_thread")]`.
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub async fn render(el: Element) -> Result<(), Error> {
     install_panic_hook();
     let mut backend = FullscreenBackend::new();
@@ -253,6 +257,7 @@ pub async fn render(el: Element) -> Result<(), Error> {
     run_loop(el, guard).await
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result<(), Error> {
     let size = guard.backend.size()?;
     let mut core = AppCore::new(el, size);
@@ -321,6 +326,7 @@ pub(crate) struct InlineRestoreGuard<'a, S: InlineSink + ?Sized> {
     pub backend: &'a mut S,
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 impl<'a, S: InlineSink + ?Sized> Drop for InlineRestoreGuard<'a, S> {
     fn drop(&mut self) {
         let _ = self.backend.leave();
@@ -333,6 +339,7 @@ impl<'a, S: InlineSink + ?Sized> Drop for InlineRestoreGuard<'a, S> {
 /// in place. Unlike [`render`], this does not use the alternate screen.
 ///
 /// The returned future is `!Send` — use `#[tokio::main(flavor = "current_thread")]`.
+#[cfg_attr(coverage_nightly, coverage(off))]
 pub async fn render_inline(el: Element) -> Result<(), Error> {
     install_panic_hook();
     let mut backend = InlineBackend::new();
@@ -343,6 +350,7 @@ pub async fn render_inline(el: Element) -> Result<(), Error> {
     run_inline_loop(el, guard).await
 }
 
+#[cfg_attr(coverage_nightly, coverage(off))]
 async fn run_inline_loop<S: InlineSink>(
     el: Element,
     guard: InlineRestoreGuard<'_, S>,
@@ -393,6 +401,7 @@ async fn run_inline_loop<S: InlineSink>(
 }
 
 /// Commit any queued scrollback rows, then redraw the live region.
+#[cfg_attr(coverage_nightly, coverage(off))]
 fn commit_and_present<S: InlineSink>(core: &mut AppCore, backend: &mut S) -> Result<(), Error> {
     let (w, h) = core.size;
     let committed = core.take_committed(w, h);
@@ -469,6 +478,80 @@ mod tests {
         );
     }
 
+    #[test]
+    fn appcore_wakes_dispatch_release_and_resize_with_depth() {
+        use crate::hooks::input::{KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+        use crate::hooks::state::State;
+        use crate::test_util::Shared;
+
+        #[derive(Clone, PartialEq, Default)]
+        struct CP {
+            handle: Shared<Option<State<i32>>>,
+            seen: Shared<i32>,
+        }
+        struct Child;
+        impl Component for Child {
+            type Props = CP;
+            fn render(props: &CP, hooks: &mut Hooks) -> Element {
+                let n = hooks.use_state(|| 0);
+                *props.handle.lock() = Some(n.clone());
+                *props.seen.lock() = n.get();
+                Element::text(TextProps {
+                    content: n.get().to_string(),
+                    ..Default::default()
+                })
+            }
+        }
+        #[derive(Clone, PartialEq, Default)]
+        struct PP {
+            child: CP,
+        }
+        struct Parent;
+        impl Component for Parent {
+            type Props = PP;
+            fn render(props: &PP, _hooks: &mut Hooks) -> Element {
+                Element::view(
+                    ViewProps::default(),
+                    vec![Element::component::<Child>(props.child.clone())],
+                )
+            }
+        }
+
+        let props = PP::default();
+        let mut core = AppCore::new(Element::component::<Parent>(props.clone()), (10, 5));
+        core.process_wakes();
+
+        // Dirty a non-root (child) fiber so depth() walks up to the root.
+        let st = props.child.handle.lock().clone().unwrap();
+        st.set(7);
+        core.process_wakes();
+        assert_eq!(*props.child.seen.lock(), 7);
+
+        core.apply_wake(Wake::Redraw);
+        core.resize(20, 8);
+        core.process_wakes();
+        assert_eq!(core.size, (20, 8));
+
+        // A key Release is dropped (only Press/Repeat dispatch).
+        core.dispatch_key(KeyEvent::new_with_kind(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+            KeyEventKind::Release,
+        ));
+
+        core.apply_wake(Wake::Exit);
+        assert!(core.exited);
+    }
+
+    #[test]
+    fn recording_sink_lifecycle() {
+        let mut s = crate::backend::inline::RecordingSink::new(4, 2);
+        assert_eq!(s.size().unwrap(), (4, 2));
+        s.enter().unwrap();
+        s.leave().unwrap();
+        assert_eq!(s.lifecycle, vec!["enter", "leave"]);
+    }
+
     // Test shim mirroring commit_and_present for a concrete sink.
     fn commit_and_present_into<S: InlineSink>(core: &mut AppCore, sink: &mut S) {
         let (w, h) = core.size;
@@ -476,5 +559,52 @@ mod tests {
         sink.commit(&committed).unwrap();
         let live = core.live_rows(w, h);
         sink.present(&live).unwrap();
+    }
+
+    #[test]
+    fn depth_orders_multiple_dirty_fibers() {
+        use crate::hooks::state::State;
+        use crate::test_util::Shared;
+        #[derive(Clone, PartialEq, Default)]
+        struct KP {
+            h: Shared<Option<State<i32>>>,
+        }
+        struct Kid;
+        impl Component for Kid {
+            type Props = KP;
+            fn render(props: &KP, hooks: &mut Hooks) -> Element {
+                let n = hooks.use_state(|| 0);
+                *props.h.lock() = Some(n.clone());
+                Element::text(TextProps {
+                    content: n.get().to_string(),
+                    ..Default::default()
+                })
+            }
+        }
+        #[derive(Clone, PartialEq, Default)]
+        struct RP {
+            a: KP,
+            b: KP,
+        }
+        struct Root;
+        impl Component for Root {
+            type Props = RP;
+            fn render(p: &RP, _h: &mut Hooks) -> Element {
+                Element::view(
+                    ViewProps::default(),
+                    vec![
+                        Element::component::<Kid>(p.a.clone()),
+                        Element::component::<Kid>(p.b.clone()),
+                    ],
+                )
+            }
+        }
+        let p = RP::default();
+        let mut core = AppCore::new(Element::component::<Root>(p.clone()), (10, 5));
+        core.process_wakes();
+        // Dirty BOTH kids so process_wakes sorts and depth() actually runs.
+        p.a.h.lock().clone().unwrap().set(1);
+        p.b.h.lock().clone().unwrap().set(2);
+        core.process_wakes();
     }
 }

@@ -522,4 +522,14 @@ mod tests {
         };
         assert_eq!(*v.downcast_ref::<u32>().unwrap(), 2);
     }
+
+    #[test]
+    fn render_fiber_guards_missing_id_and_non_component() {
+        use crate::props::ViewProps;
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(Element::view(ViewProps::default(), vec![]), &rt);
+        tree.render_fiber(root, &rt); // non-component fiber -> early return
+        tree.render_fiber(9999, &rt); // missing id -> early return
+    }
 }

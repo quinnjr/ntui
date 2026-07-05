@@ -319,4 +319,53 @@ mod tests {
             }
         );
     }
+
+    #[test]
+    fn justify_align_and_percent_variants() {
+        use crate::props::{AlignItems, JustifyContent};
+        let js = [
+            JustifyContent::Center,
+            JustifyContent::SpaceBetween,
+            JustifyContent::SpaceAround,
+            JustifyContent::SpaceEvenly,
+            JustifyContent::End,
+        ];
+        let as_ = [AlignItems::Start, AlignItems::Center, AlignItems::End];
+        for j in js {
+            for a in as_ {
+                let (rt, _rx) = RuntimeHandle::test_handle();
+                let mut tree = FiberTree::new();
+                tree.mount_root(
+                    Element::view(
+                        ViewProps {
+                            justify_content: j,
+                            align_items: a,
+                            flex_direction: FlexDirection::Row,
+                            width: Dimension::Percent(100.0),
+                            height: Dimension::Cells(3),
+                            ..Default::default()
+                        },
+                        vec![
+                            Element::text(TextProps {
+                                content: "a".into(),
+                                ..Default::default()
+                            }),
+                            Element::text(TextProps {
+                                content: "b".into(),
+                                ..Default::default()
+                            }),
+                        ],
+                    ),
+                    &rt,
+                );
+                compute_layout(&mut tree, 20, 5);
+            }
+        }
+    }
+
+    #[test]
+    fn empty_tree_layout_is_a_noop() {
+        let mut tree = FiberTree::new(); // no root -> early return
+        compute_layout(&mut tree, 10, 5);
+    }
 }

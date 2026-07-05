@@ -131,3 +131,77 @@ impl<'a> Hooks<'a> {
         self.use_state(move || Scroll::new(fiber, wake)).get()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::component::Component;
+    use crate::element::Element;
+    use crate::fiber::FiberTree;
+    use crate::hooks::RuntimeHandle;
+    use crate::props::ViewProps;
+    use crate::test_util::Shared;
+
+    fn handle() -> Scroll {
+        let (rt, rx) = RuntimeHandle::test_handle();
+        std::mem::forget(rx); // keep the wake channel open
+        Scroll::new(0, rt.wake.clone())
+    }
+
+    #[test]
+    fn methods_clamp_debug_and_eq() {
+        let s = handle();
+        // Initial state is trivially "at bottom", so metrics pin to the bottom.
+        s.set_metrics(10, 4);
+        assert_eq!(s.max_offset(), 6);
+        assert!(s.at_bottom());
+        assert_eq!(s.offset(), 6);
+
+        s.to_top();
+        assert_eq!(s.offset(), 0);
+        s.scroll_by(3);
+        assert_eq!(s.offset(), 3);
+        s.scroll_by(-1);
+        assert_eq!(s.offset(), 2);
+        s.scroll_by(100); // clamps to max
+        assert_eq!(s.offset(), 6);
+        s.scroll_to(1);
+        assert_eq!(s.offset(), 1);
+        s.to_bottom();
+        assert_eq!(s.offset(), 6);
+
+        // Not at bottom → set_metrics preserves (clamped) offset instead of pinning.
+        s.scroll_to(2);
+        s.set_metrics(20, 4);
+        assert_eq!(s.offset(), 2);
+
+        assert!(format!("{s:?}").contains("offset"));
+        assert_eq!(s, s.clone());
+        assert_ne!(s, handle());
+    }
+
+    #[test]
+    fn use_scroll_returns_a_persistent_handle() {
+        #[derive(Clone, PartialEq, Default)]
+        struct P {
+            out: Shared<Option<Scroll>>,
+        }
+        struct C;
+        impl Component for C {
+            type Props = P;
+            fn render(props: &P, hooks: &mut Hooks) -> Element {
+                *props.out.lock() = Some(hooks.use_scroll());
+                Element::view(ViewProps::default(), vec![])
+            }
+        }
+        let (rt, rx) = RuntimeHandle::test_handle();
+        std::mem::forget(rx);
+        let mut tree = FiberTree::new();
+        let props = P::default();
+        let root = tree.mount_root(Element::component::<C>(props.clone()), &rt);
+        let first = props.out.lock().clone().unwrap();
+        tree.render_fiber(root, &rt);
+        let second = props.out.lock().clone().unwrap();
+        assert_eq!(first, second, "same handle persists across renders");
+    }
+}

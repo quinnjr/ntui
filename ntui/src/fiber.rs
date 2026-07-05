@@ -289,4 +289,25 @@ mod tests {
         tree.unmount(root);
         assert_eq!(tree.len(), 0);
     }
+
+    #[test]
+    fn empty_tree_effects_and_handlers_are_noops() {
+        let mut tree = FiberTree::new();
+        tree.flush_effects(); // no root -> early return
+        assert!(tree.collect_input_handlers().is_empty());
+    }
+
+    #[test]
+    #[should_panic(expected = "no fiber with id")]
+    fn get_missing_fiber_panics() {
+        let tree = FiberTree::new();
+        let _ = tree.get(999);
+    }
+
+    #[test]
+    #[should_panic(expected = "no fiber with id")]
+    fn get_mut_missing_fiber_panics() {
+        let mut tree = FiberTree::new();
+        let _ = tree.get_mut(999);
+    }
 }

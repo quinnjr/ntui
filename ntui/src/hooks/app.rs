@@ -82,4 +82,37 @@ mod tests {
         t.send_key(KeyCode::Char('q')).unwrap();
         assert!(t.exited());
     }
+
+    #[test]
+    fn app_handle_redraw_and_exit_send_wakes() {
+        use crate::component::Component;
+        use crate::element::Element;
+        use crate::fiber::FiberTree;
+        use crate::hooks::{Hooks, RuntimeHandle, Wake};
+        use crate::props::ViewProps;
+        use crate::test_util::Shared;
+
+        #[derive(Clone, PartialEq, Default)]
+        struct P {
+            h: Shared<Option<super::AppHandle>>,
+        }
+        struct C;
+        impl Component for C {
+            type Props = P;
+            fn render(props: &P, hooks: &mut Hooks) -> Element {
+                *props.h.lock() = Some(hooks.use_app());
+                Element::view(ViewProps::default(), vec![])
+            }
+        }
+        let (rt, mut rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let props = P::default();
+        tree.mount_root(Element::component::<C>(props.clone()), &rt);
+        let app = props.h.lock().clone().unwrap();
+        while rx.try_recv().is_ok() {} // drain mount wakes
+        app.redraw();
+        assert!(matches!(rx.try_recv(), Ok(Wake::Redraw)));
+        app.exit();
+        assert!(matches!(rx.try_recv(), Ok(Wake::Exit)));
+    }
 }
