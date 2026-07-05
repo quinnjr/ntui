@@ -1,6 +1,6 @@
 use crate::style::{Attrs, Color};
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub struct Cell {
     pub ch: char,
     pub fg: Color,
@@ -74,11 +74,7 @@ impl Buffer {
             for x in 0..self.width {
                 let cell = self.get(x, y);
                 if full || cell != prev.get(x, y) {
-                    out.push(CellUpdate {
-                        x,
-                        y,
-                        cell: cell.clone(),
-                    });
+                    out.push(CellUpdate { x, y, cell: *cell });
                 }
             }
         }

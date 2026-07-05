@@ -24,7 +24,7 @@ pub(crate) fn to_ct(c: Color) -> style::Color {
     }
 }
 
-fn ct_attrs(a: Attrs) -> style::Attributes {
+pub(crate) fn ct_attrs(a: Attrs) -> style::Attributes {
     let mut attrs = style::Attributes::default();
     if a.bold {
         attrs.set(style::Attribute::Bold);

@@ -113,7 +113,7 @@ impl InlineSink for InlineBackend {
 /// Extract a buffer's rows as owned cell vectors (for the inline runtime).
 pub(crate) fn buffer_rows(buf: &crate::buffer::Buffer) -> Vec<Vec<Cell>> {
     (0..buf.height())
-        .map(|y| (0..buf.width()).map(|x| buf.get(x, y).clone()).collect())
+        .map(|y| (0..buf.width()).map(|x| *buf.get(x, y)).collect())
         .collect()
 }
 

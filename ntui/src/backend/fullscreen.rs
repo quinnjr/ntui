@@ -58,19 +58,7 @@ impl Backend for FullscreenBackend {
 
     fn flush(&mut self, updates: &[CellUpdate]) -> io::Result<()> {
         for u in updates {
-            let mut attrs = style::Attributes::default();
-            if u.cell.attrs.bold {
-                attrs.set(style::Attribute::Bold);
-            }
-            if u.cell.attrs.dim {
-                attrs.set(style::Attribute::Dim);
-            }
-            if u.cell.attrs.italic {
-                attrs.set(style::Attribute::Italic);
-            }
-            if u.cell.attrs.underline {
-                attrs.set(style::Attribute::Underlined);
-            }
+            let attrs = crate::backend::ansi::ct_attrs(u.cell.attrs);
             queue!(
                 self.out,
                 cursor::MoveTo(u.x, u.y),

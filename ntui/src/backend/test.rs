@@ -36,7 +36,7 @@ impl Backend for TestBackend {
     }
     fn flush(&mut self, updates: &[CellUpdate]) -> io::Result<()> {
         for u in updates {
-            self.buffer.set(u.x, u.y, u.cell.clone());
+            self.buffer.set(u.x, u.y, u.cell);
         }
         Ok(())
     }
