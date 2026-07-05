@@ -57,7 +57,8 @@ more examples in the same directory:
 - [`claude_code.rs`](ntui/examples/claude_code.rs) — a fuller Claude Code-style
   interface: welcome banner, `●` tool-call blocks with `⎿` results, an animated
   "thinking" spinner with elapsed time, a bordered input with a blinking cursor,
-  and interrupt-on-Esc.
+  a scrollable transcript that auto-follows streaming output (PgUp/PgDn to
+  scroll back), and interrupt-on-Esc.
 
 ## Hooks (v1)
 
@@ -69,13 +70,16 @@ more examples in the same directory:
 | `use_future` / `use_stream` | Spawn tokio work owned by the component; aborted on unmount |
 | `use_context` / `ContextProvider` | Value injection down the tree |
 | `use_terminal_size` | Reactive terminal dimensions |
+| `use_scroll` | Scroll position for an `Overflow::Scroll` view; auto-follows the bottom |
 | `use_app` | App handle: `exit()`, request redraw |
 
 ## v1 limitations
 
 - **Fullscreen-only.** Only `FullscreenBackend` (alternate screen + raw mode)
-  ships in v1. Inline/scrollback rendering and `<Static>` output are designed
-  for at the `Backend` trait level but not implemented yet.
+  ships in v1. In-app scroll regions exist (`Overflow::Scroll` + `use_scroll`),
+  but terminal-scrollback / inline `<Static>` output (writing finished output
+  into the shell's real scrollback) is designed for at the `Backend` trait
+  level and not implemented yet.
 - **Char-width text measurement.** Text is measured at 1 column per `char`,
   not by grapheme cluster or display width — wide (e.g. CJK) and combining
   characters will misalign. Fix planned post-v1 via `unicode-width`.

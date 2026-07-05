@@ -6,15 +6,17 @@
 //! interrupt-on-Esc — all on the flexbox layout + fiber reconciler.
 //!
 //! Run: `cargo run --example claude_code`
-//! Keys: type + Enter to send · Esc interrupts a reply (or quits when idle).
+//! Keys: type + Enter to send · PgUp/PgDn scroll history · Esc interrupts a
+//! reply (or quits when idle).
 //!
-//! Note: ntui v1 has no scrollback, so the transcript shows the most recent
-//! blocks that fit; older turns scroll off the top.
+//! The transcript is an `Overflow::Scroll` box driven by `use_scroll`: it
+//! auto-follows the bottom as replies stream, and PgUp/PgDn scroll back.
 
 use std::time::Duration;
 
 use ntui::{
-    BorderStyle, Color, Element, FlexDirection, KeyCode, Weight, component, element, render,
+    BorderStyle, Color, Element, FlexDirection, KeyCode, Overflow, Weight, component, element,
+    render,
 };
 
 /// Anthropic clay/orange accent.
@@ -84,7 +86,7 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
     let start = hooks.use_state(|| 0usize); // frame the current turn began
     let verb = hooks.use_state(|| VERBS[0]);
     let generation = hooks.use_state(|| 0u64); // bumped to cancel a turn
-    let (_, height) = hooks.use_terminal_size();
+    let scroll = hooks.use_scroll(); // transcript scroll position (auto-follows)
     let app = hooks.use_app();
 
     // Animation clock — drives the spinner and the elapsed counter.
@@ -105,11 +107,14 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
         start.clone(),
     );
     let cur_frame = frame.clone();
+    let sc = scroll.clone();
     hooks.use_input(move |ev, _| match ev.code {
         KeyCode::Char(c) => d.update(|s| s.push(c)),
         KeyCode::Backspace => d.update(|s| {
             s.pop();
         }),
+        KeyCode::PageUp => sc.scroll_by(-5),
+        KeyCode::PageDown => sc.scroll_by(5),
         KeyCode::Esc => {
             if w.get() {
                 g.update(|n| *n += 1); // cancel the in-flight turn
@@ -179,16 +184,9 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
         _ => {}
     });
 
-    // Show the most recent blocks that plausibly fit above the input.
-    let all = messages.get();
-    let keep = ((height as usize).saturating_sub(11) / 2).clamp(4, 64);
-    let shown: Vec<(usize, Block)> = {
-        let n = all.len();
-        all.into_iter()
-            .enumerate()
-            .skip(n.saturating_sub(keep))
-            .collect()
-    };
+    // The whole transcript is rendered into a scroll box; it auto-follows the
+    // bottom as replies stream, and PgUp/PgDn scroll back through history.
+    let transcript = messages.get();
 
     // Status line (spinner) only while a turn is in flight.
     let status = if working.get() {
@@ -224,8 +222,15 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
                 Text(content: "/help for help · /status for setup", color: Color::DarkGrey)
             }
 
-            View(flex_direction: FlexDirection::Column, flex_grow: 1.0_f32, gap: 1, margin: 1) {
-                #(shown.into_iter().map(|(i, b)| block_view(i, b)))
+            View(
+                flex_direction: FlexDirection::Column,
+                flex_grow: 1.0_f32,
+                gap: 1,
+                margin: 1,
+                overflow: Overflow::Scroll,
+                scroll: scroll.clone(),
+            ) {
+                #(transcript.into_iter().enumerate().map(|(i, b)| block_view(i, b)))
             }
 
             #(std::iter::once(status))
@@ -235,7 +240,7 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
             }
 
             Text(
-                content: "⏵⏵ auto-accept edits · esc to interrupt · esc (idle) to quit",
+                content: "⏵⏵ auto-accept · pgup/pgdn scroll · esc interrupt/quit",
                 color: Color::DarkGrey,
             )
         }
