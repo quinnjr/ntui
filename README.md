@@ -46,14 +46,18 @@ Run it: `cargo run --example counter` (from the `ntui/` crate directory, or
 `cargo run --example counter -p ntui` from the workspace root).
 
 See it verbatim at [`ntui/examples/counter.rs`](ntui/examples/counter.rs), and
-three more examples in the same directory:
+more examples in the same directory:
 
 - [`spinner.rs`](ntui/examples/spinner.rs) — `use_future` driving an animated
   spinner.
 - [`list.rs`](ntui/examples/list.rs) — a keyed, growable/shrinkable list.
-- [`demo.rs`](ntui/examples/demo.rs) — a Claude-Code-ish chat demo: a text
-  input line and a streamed reply, spawned with `tokio::spawn` from inside an
-  input handler.
+- [`demo.rs`](ntui/examples/demo.rs) — a minimal chat demo: a text input line
+  and a streamed reply, spawned with `tokio::spawn` from inside an input
+  handler.
+- [`claude_code.rs`](ntui/examples/claude_code.rs) — a fuller Claude Code-style
+  interface: welcome banner, `●` tool-call blocks with `⎿` results, an animated
+  "thinking" spinner with elapsed time, a bordered input with a blinking cursor,
+  and interrupt-on-Esc.
 
 ## Hooks (v1)
 
