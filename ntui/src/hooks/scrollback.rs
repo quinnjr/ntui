@@ -27,6 +27,15 @@ pub struct Scrollback {
     wake: tokio::sync::mpsc::UnboundedSender<Wake>,
 }
 
+impl std::fmt::Debug for Scrollback {
+    // `Element` isn't `Debug`; report only the pending-commit count.
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Scrollback")
+            .field("pending", &self.queue.borrow().len())
+            .finish_non_exhaustive()
+    }
+}
+
 impl Scrollback {
     /// Print `element` permanently to the terminal's scrollback on the next frame.
     pub fn commit(&self, element: Element) {

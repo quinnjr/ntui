@@ -304,6 +304,10 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
                 break;
             }
         }
+        // Fullscreen never draws committed scrollback (only render_inline does),
+        // so discard anything use_scrollback queued to keep it from growing without
+        // bound. Committing under render() is a documented no-op.
+        core.rt.scrollback.borrow_mut().clear();
         core.draw(guard.backend)?;
         last_frame = Instant::now();
     }
@@ -337,6 +341,9 @@ impl<'a, S: InlineSink + ?Sized> Drop for InlineRestoreGuard<'a, S> {
 /// [`use_scrollback`](crate::Hooks::use_scrollback) is printed permanently into
 /// the terminal's real scrollback, while a live region at the bottom is redrawn
 /// in place. Unlike [`render`], this does not use the alternate screen.
+///
+/// [`use_scrollback`] only draws under this entry point: committing under the
+/// fullscreen [`render`] is a no-op (the queued content is discarded each frame).
 ///
 /// The returned future is `!Send` — use `#[tokio::main(flavor = "current_thread")]`.
 #[cfg_attr(coverage_nightly, coverage(off))]
@@ -393,6 +400,9 @@ async fn run_inline_loop<S: InlineSink>(
         if elapsed < FRAME {
             tokio::time::sleep(FRAME - elapsed).await;
             core.process_wakes();
+            if core.exited {
+                break;
+            }
         }
         commit_and_present(&mut core, guard.backend)?;
         last_frame = Instant::now();
@@ -565,6 +575,9 @@ mod tests {
     fn depth_orders_dirty_fibers_shallowest_first() {
         use crate::hooks::state::State;
         use crate::test_util::Shared;
+
+        // Root (depth 0) wraps Mid (deeper). Both log their id when they render;
+        // dirtying both must re-render Root before Mid (shallowest-first).
         #[derive(Clone, PartialEq, Default)]
         struct Ctx {
             root_state: Shared<Option<State<i32>>>,
@@ -578,9 +591,6 @@ mod tests {
                 let n = hooks.use_state(|| 0);
                 *ctx.mid_state.lock() = Some(n.clone());
                 ctx.log.lock().push('M');
-
-        // Root (depth 0) wraps Mid (deeper). Both log their id when they render;
-        // dirtying both must re-render Root before Mid (shallowest-first).
                 Element::text(TextProps {
                     content: n.get().to_string(),
                     ..Default::default()
@@ -611,10 +621,10 @@ mod tests {
         ctx.root_state.lock().clone().unwrap().set(1);
         ctx.mid_state.lock().clone().unwrap().set(1);
         core.process_wakes();
-    }
-}
 
         // Root is shallower, so it re-renders first; Root's reconcile leaves Mid's
         // props unchanged (props_eq), so Mid re-renders exactly once, from its own
         // dirty mark — after Root.
         assert_eq!(*ctx.log.lock(), vec!['R', 'M']);
+    }
+}

@@ -75,38 +75,53 @@ impl InlineSink for InlineBackend {
     }
 
     fn commit(&mut self, rows: &[Vec<Cell>]) -> io::Result<()> {
-        queue!(
-            self.out,
-            terminal::Clear(terminal::ClearType::FromCursorDown)
-        )?;
-        for row in rows {
-            write_row(&mut self.out, row)?;
-            // Permanent newline: at the bottom of the screen this scrolls the
-            // committed line up into the terminal's scrollback.
-            queue!(self.out, crossterm::style::Print("\r\n"))?;
+        // On any mid-sequence error, still flush so no partial ANSI stays queued
+        // in the BufWriter (which leave() would later drain interleaved).
+        let r = (|| -> io::Result<()> {
+            queue!(
+                self.out,
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            )?;
+            for row in rows {
+                write_row(&mut self.out, row)?;
+                // Permanent newline: at the bottom of the screen this scrolls the
+                // committed line up into the terminal's scrollback.
+                queue!(self.out, crossterm::style::Print("\r\n"))?;
+            }
+            self.out.flush()
+            // Cursor now sits at the new top-left of the live region.
+        })();
+        if r.is_err() {
+            let _ = self.out.flush();
         }
-        self.out.flush()
-        // Cursor now sits at the new top-left of the live region.
+        r
     }
 
     fn present(&mut self, rows: &[Vec<Cell>]) -> io::Result<()> {
-        // Erase the previous live region, then draw the new one.
-        queue!(
-            self.out,
-            terminal::Clear(terminal::ClearType::FromCursorDown)
-        )?;
-        for (i, row) in rows.iter().enumerate() {
-            write_row(&mut self.out, row)?;
-            if i + 1 < rows.len() {
-                queue!(self.out, crossterm::style::Print("\r\n"))?;
+        // On any mid-sequence error, still flush so no partial ANSI stays queued.
+        let r = (|| -> io::Result<()> {
+            // Erase the previous live region, then draw the new one.
+            queue!(
+                self.out,
+                terminal::Clear(terminal::ClearType::FromCursorDown)
+            )?;
+            for (i, row) in rows.iter().enumerate() {
+                write_row(&mut self.out, row)?;
+                if i + 1 < rows.len() {
+                    queue!(self.out, crossterm::style::Print("\r\n"))?;
+                }
             }
+            // Return the cursor to the top-left of the live region.
+            if rows.len() > 1 {
+                queue!(self.out, cursor::MoveUp(rows.len() as u16 - 1))?;
+            }
+            queue!(self.out, cursor::MoveToColumn(0))?;
+            self.out.flush()
+        })();
+        if r.is_err() {
+            let _ = self.out.flush();
         }
-        // Return the cursor to the top-left of the live region.
-        if rows.len() > 1 {
-            queue!(self.out, cursor::MoveUp(rows.len() as u16 - 1))?;
-        }
-        queue!(self.out, cursor::MoveToColumn(0))?;
-        self.out.flush()
+        r
     }
 }
 
