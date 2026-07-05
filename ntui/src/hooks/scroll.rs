@@ -77,17 +77,23 @@ impl Scroll {
 
     /// Scroll by `delta` rows (negative = up), clamped to the valid range.
     pub fn scroll_by(&self, delta: i32) {
-        let max = self.max_offset() as i32;
-        let mut g = self.lock();
-        g.offset = (g.offset as i32 + delta).clamp(0, max) as u16;
-        drop(g);
+        {
+            // Hold one lock across read-and-clamp: `set_metrics` (from layout,
+            // possibly another thread) must not change the bounds mid-update.
+            let mut g = self.lock();
+            let max = g.content.saturating_sub(g.viewport) as i32;
+            g.offset = (g.offset as i32 + delta).clamp(0, max) as u16;
+        }
         self.wake();
     }
 
     /// Scroll to an absolute row offset, clamped to the valid range.
     pub fn scroll_to(&self, offset: u16) {
-        let max = self.max_offset();
-        self.lock().offset = offset.min(max);
+        {
+            let mut g = self.lock();
+            let max = g.content.saturating_sub(g.viewport);
+            g.offset = offset.min(max);
+        }
         self.wake();
     }
 

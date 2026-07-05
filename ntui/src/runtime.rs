@@ -562,49 +562,59 @@ mod tests {
     }
 
     #[test]
-    fn depth_orders_multiple_dirty_fibers() {
+    fn depth_orders_dirty_fibers_shallowest_first() {
         use crate::hooks::state::State;
         use crate::test_util::Shared;
         #[derive(Clone, PartialEq, Default)]
-        struct KP {
-            h: Shared<Option<State<i32>>>,
+        struct Ctx {
+            root_state: Shared<Option<State<i32>>>,
+            mid_state: Shared<Option<State<i32>>>,
+            log: Shared<Vec<char>>,
         }
-        struct Kid;
-        impl Component for Kid {
-            type Props = KP;
-            fn render(props: &KP, hooks: &mut Hooks) -> Element {
+        struct Mid;
+        impl Component for Mid {
+            type Props = Ctx;
+            fn render(ctx: &Ctx, hooks: &mut Hooks) -> Element {
                 let n = hooks.use_state(|| 0);
-                *props.h.lock() = Some(n.clone());
+                *ctx.mid_state.lock() = Some(n.clone());
+                ctx.log.lock().push('M');
+
+        // Root (depth 0) wraps Mid (deeper). Both log their id when they render;
+        // dirtying both must re-render Root before Mid (shallowest-first).
                 Element::text(TextProps {
                     content: n.get().to_string(),
                     ..Default::default()
                 })
             }
         }
-        #[derive(Clone, PartialEq, Default)]
-        struct RP {
-            a: KP,
-            b: KP,
-        }
         struct Root;
         impl Component for Root {
-            type Props = RP;
-            fn render(p: &RP, _h: &mut Hooks) -> Element {
+            type Props = Ctx;
+            fn render(ctx: &Ctx, hooks: &mut Hooks) -> Element {
+                let n = hooks.use_state(|| 0);
+                *ctx.root_state.lock() = Some(n.clone());
+                ctx.log.lock().push('R');
+                let _ = n.get();
                 Element::view(
                     ViewProps::default(),
-                    vec![
-                        Element::component::<Kid>(p.a.clone()),
-                        Element::component::<Kid>(p.b.clone()),
-                    ],
+                    vec![Element::component::<Mid>(ctx.clone())],
                 )
             }
         }
-        let p = RP::default();
-        let mut core = AppCore::new(Element::component::<Root>(p.clone()), (10, 5));
+
+        let ctx = Ctx::default();
+        let mut core = AppCore::new(Element::component::<Root>(ctx.clone()), (10, 5));
         core.process_wakes();
-        // Dirty BOTH kids so process_wakes sorts and depth() actually runs.
-        p.a.h.lock().clone().unwrap().set(1);
-        p.b.h.lock().clone().unwrap().set(2);
+        ctx.log.lock().clear(); // drop the mount-time renders
+
+        // Dirty both fibers in one batch so process_wakes must sort by depth.
+        ctx.root_state.lock().clone().unwrap().set(1);
+        ctx.mid_state.lock().clone().unwrap().set(1);
         core.process_wakes();
     }
 }
+
+        // Root is shallower, so it re-renders first; Root's reconcile leaves Mid's
+        // props unchanged (props_eq), so Mid re-renders exactly once, from its own
+        // dirty mark — after Root.
+        assert_eq!(*ctx.log.lock(), vec!['R', 'M']);

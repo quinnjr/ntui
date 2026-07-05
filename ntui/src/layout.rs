@@ -323,49 +323,76 @@ mod tests {
     #[test]
     fn justify_align_and_percent_variants() {
         use crate::props::{AlignItems, JustifyContent};
-        let js = [
-            JustifyContent::Center,
-            JustifyContent::SpaceBetween,
-            JustifyContent::SpaceAround,
-            JustifyContent::SpaceEvenly,
-            JustifyContent::End,
-        ];
-        let as_ = [AlignItems::Start, AlignItems::Center, AlignItems::End];
-        for j in js {
-            for a in as_ {
-                let (rt, _rx) = RuntimeHandle::test_handle();
-                let mut tree = FiberTree::new();
-                tree.mount_root(
-                    Element::view(
-                        ViewProps {
-                            justify_content: j,
-                            align_items: a,
-                            flex_direction: FlexDirection::Row,
-                            width: Dimension::Percent(100.0),
-                            height: Dimension::Cells(3),
+
+        // Lay out a Row of two 1-wide / 1-tall texts in a 20x5 (Percent(100)) box
+        // and return the two children's rects, so we can assert positions.
+        fn row(j: JustifyContent, a: AlignItems) -> (Rect, Rect) {
+            let (rt, _rx) = RuntimeHandle::test_handle();
+            let mut tree = FiberTree::new();
+            let root = tree.mount_root(
+                Element::view(
+                    ViewProps {
+                        justify_content: j,
+                        align_items: a,
+                        flex_direction: FlexDirection::Row,
+                        width: Dimension::Percent(100.0),
+                        height: Dimension::Percent(100.0),
+                        ..Default::default()
+                    },
+                    vec![
+                        Element::text(TextProps {
+                            content: "a".into(),
                             ..Default::default()
-                        },
-                        vec![
-                            Element::text(TextProps {
-                                content: "a".into(),
-                                ..Default::default()
-                            }),
-                            Element::text(TextProps {
-                                content: "b".into(),
-                                ..Default::default()
-                            }),
-                        ],
-                    ),
-                    &rt,
-                );
-                compute_layout(&mut tree, 20, 5);
-            }
+                        }),
+                        Element::text(TextProps {
+                            content: "b".into(),
+                            ..Default::default()
+                        }),
+                    ],
+                ),
+                &rt,
+            );
+            compute_layout(&mut tree, 20, 5);
+            let kids = tree.get(root).children.clone();
+            (tree.get(kids[0]).layout, tree.get(kids[1]).layout)
         }
+
+        // justify_content drives main-axis (horizontal) placement.
+        let stretch = AlignItems::Stretch;
+        let (r0, r1) = row(JustifyContent::Start, stretch);
+        assert_eq!((r0.x, r1.x), (0, 1), "Start packs at the left");
+        let (r0, r1) = row(JustifyContent::End, stretch);
+        assert_eq!((r0.x, r1.x), (18, 19), "End packs at the right");
+        let (r0, r1) = row(JustifyContent::SpaceBetween, stretch);
+        assert_eq!((r0.x, r1.x), (0, 19), "SpaceBetween pins to both edges");
+        let (r0, r1) = row(JustifyContent::Center, stretch);
+        assert!(
+            r0.x > 0 && r1.x < 19 && r0.x < r1.x,
+            "Center is inset: {r0:?} {r1:?}"
+        );
+        for j in [JustifyContent::SpaceAround, JustifyContent::SpaceEvenly] {
+            let (r0, r1) = row(j, stretch);
+            assert!(
+                r0.x > 0 && r1.x < 19 && r0.x < r1.x,
+                "{j:?} distributes interior gaps: {r0:?} {r1:?}"
+            );
+        }
+
+        // align_items drives cross-axis (vertical) placement in the 5-tall box.
+        assert_eq!(row(JustifyContent::Start, AlignItems::Start).0.y, 0);
+        assert_eq!(row(JustifyContent::Start, AlignItems::End).0.y, 4);
+        assert_eq!(row(JustifyContent::Start, AlignItems::Center).0.y, 2);
+        assert_eq!(
+            row(JustifyContent::Start, AlignItems::Stretch).0.height,
+            5,
+            "Stretch fills the cross axis"
+        );
     }
 
     #[test]
     fn empty_tree_layout_is_a_noop() {
         let mut tree = FiberTree::new(); // no root -> early return
         compute_layout(&mut tree, 10, 5);
+        assert_eq!(tree.root, None, "no root: layout leaves the tree untouched");
     }
 }
