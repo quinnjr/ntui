@@ -5,6 +5,7 @@ pub mod context;
 pub mod effect;
 pub mod input;
 pub mod scroll;
+pub mod scrollback;
 pub mod state;
 pub mod task;
 
@@ -42,6 +43,10 @@ pub(crate) enum Wake {
 pub(crate) struct RuntimeHandle {
     pub wake: tokio::sync::mpsc::UnboundedSender<Wake>,
     pub size: std::sync::Arc<std::sync::Mutex<(u16, u16)>>,
+    /// Queue of elements to commit to terminal scrollback (inline mode only).
+    /// `Rc`/`RefCell` because it never crosses threads — the render loop is
+    /// single-threaded and this handle is only touched during renders.
+    pub scrollback: std::rc::Rc<std::cell::RefCell<Vec<crate::element::Element>>>,
 }
 
 impl RuntimeHandle {
@@ -52,6 +57,7 @@ impl RuntimeHandle {
             RuntimeHandle {
                 wake,
                 size: std::sync::Arc::new(std::sync::Mutex::new((80, 24))),
+                scrollback: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             },
             rx,
         )

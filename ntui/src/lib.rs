@@ -61,7 +61,7 @@ pub(crate) mod test_util;
 pub mod testing;
 pub(crate) mod text;
 
-pub use backend::{Backend, FullscreenBackend, TestBackend};
+pub use backend::{Backend, FullscreenBackend, InlineBackend, TestBackend};
 pub use component::Component;
 pub use element::{Element, Node};
 pub use error::Error;
@@ -70,12 +70,13 @@ pub use hooks::app::AppHandle;
 pub use hooks::effect::Cleanup;
 pub use hooks::input::{InputCtx, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
 pub use hooks::scroll::Scroll;
+pub use hooks::scrollback::Scrollback;
 pub use hooks::state::State;
 pub use ntui_macros::{component, element};
 pub use props::{
     AlignItems, Dimension, FlexDirection, JustifyContent, Overflow, TextProps, TextWrap, ViewProps,
 };
-pub use runtime::render;
+pub use runtime::{render, render_inline};
 pub use style::{Attrs, BorderStyle, Color, Weight};
 
 /// Internal, unstable surface for out-of-crate test tooling (benchmarks and

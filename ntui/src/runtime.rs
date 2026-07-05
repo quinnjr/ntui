@@ -5,8 +5,9 @@ use crossterm::event::{Event, EventStream};
 use futures::{FutureExt, StreamExt};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
-use crate::backend::{Backend, FullscreenBackend};
-use crate::buffer::Buffer;
+use crate::backend::inline::{InlineSink, buffer_rows};
+use crate::backend::{Backend, FullscreenBackend, InlineBackend};
+use crate::buffer::{Buffer, Cell};
 use crate::element::Element;
 use crate::error::Error;
 use crate::fiber::{FiberId, FiberTree};
@@ -44,6 +45,7 @@ impl AppCore {
         let rt = RuntimeHandle {
             wake,
             size: std::sync::Arc::new(std::sync::Mutex::new(size)),
+            scrollback: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
         };
         let mut tree = FiberTree::new();
         tree.mount_root(el, &rt);
@@ -151,6 +153,31 @@ impl AppCore {
         backend.flush(&buf.diff(prev))?;
         self.prev = Some(buf);
         Ok(())
+    }
+
+    /// Inline mode: content-sized rows of the live region. Lays out at `width`
+    /// (bounded to `max_height`), paints, and drops trailing blank rows.
+    pub fn live_rows(&mut self, width: u16, max_height: u16) -> Vec<Vec<Cell>> {
+        compute_layout(&mut self.tree, width, max_height);
+        let mut buf = Buffer::new(width, max_height);
+        paint(&self.tree, &mut buf);
+        trim_rows(buffer_rows(&buf))
+    }
+
+    /// Inline mode: drain queued scrollback elements, rendering each to rows to
+    /// be committed permanently. Each element is laid out and painted on its own.
+    pub fn take_committed(&mut self, width: u16, max_height: u16) -> Vec<Vec<Cell>> {
+        let queued: Vec<Element> = std::mem::take(&mut *self.rt.scrollback.borrow_mut());
+        let mut rows = Vec::new();
+        for el in queued {
+            let mut tree = FiberTree::new();
+            tree.mount_root(el, &self.rt);
+            compute_layout(&mut tree, width, max_height);
+            let mut buf = Buffer::new(width, max_height);
+            paint(&tree, &mut buf);
+            rows.extend(trim_rows(buffer_rows(&buf)));
+        }
+        rows
     }
 
     // Used by the render() event-loop task to await the next wake.
@@ -278,10 +305,113 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
     Ok(()) // guard drops here -> leave()
 }
 
+/// Drop trailing all-blank rows so the live/committed region is content-sized.
+fn trim_rows(mut rows: Vec<Vec<Cell>>) -> Vec<Vec<Cell>> {
+    while rows
+        .last()
+        .is_some_and(|r| r.iter().all(|c| *c == Cell::default()))
+    {
+        rows.pop();
+    }
+    rows
+}
+
+/// Restores the terminal for inline mode even if a panic unwinds through it.
+pub(crate) struct InlineRestoreGuard<'a, S: InlineSink + ?Sized> {
+    pub backend: &'a mut S,
+}
+
+impl<'a, S: InlineSink + ?Sized> Drop for InlineRestoreGuard<'a, S> {
+    fn drop(&mut self) {
+        let _ = self.backend.leave();
+    }
+}
+
+/// Run an app **inline**: finished output committed via
+/// [`use_scrollback`](crate::Hooks::use_scrollback) is printed permanently into
+/// the terminal's real scrollback, while a live region at the bottom is redrawn
+/// in place. Unlike [`render`], this does not use the alternate screen.
+///
+/// The returned future is `!Send` — use `#[tokio::main(flavor = "current_thread")]`.
+pub async fn render_inline(el: Element) -> Result<(), Error> {
+    install_panic_hook();
+    let mut backend = InlineBackend::new();
+    backend.enter()?;
+    let guard = InlineRestoreGuard {
+        backend: &mut backend,
+    };
+    run_inline_loop(el, guard).await
+}
+
+async fn run_inline_loop<S: InlineSink>(
+    el: Element,
+    guard: InlineRestoreGuard<'_, S>,
+) -> Result<(), Error> {
+    let (w, h) = guard.backend.size()?;
+    let mut core = AppCore::new(el, (w, h));
+    core.process_wakes();
+    commit_and_present(&mut core, guard.backend)?;
+
+    let mut events = EventStream::new();
+    let mut last_frame = Instant::now();
+    while !core.exited {
+        tokio::select! {
+            ev = events.next() => match ev {
+                Some(Ok(Event::Key(k))) => core.dispatch_key(k),
+                Some(Ok(Event::Resize(nw, nh))) => core.resize(nw, nh),
+                Some(Err(e)) => return Err(e.into()),
+                None => break,
+                _ => {}
+            },
+            wk = core.wait_wake() => match wk {
+                Some(wk) => core.apply_wake(wk),
+                None => break,
+            },
+        }
+        for _ in 0..MAX_EVENT_BURST {
+            match events.next().now_or_never() {
+                Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                Some(Some(Ok(Event::Resize(nw, nh)))) => core.resize(nw, nh),
+                Some(Some(Ok(_))) => {}
+                Some(Some(Err(e))) => return Err(e.into()),
+                Some(None) | None => break,
+            }
+        }
+        core.process_wakes();
+        if core.exited {
+            break;
+        }
+        let elapsed = last_frame.elapsed();
+        if elapsed < FRAME {
+            tokio::time::sleep(FRAME - elapsed).await;
+            core.process_wakes();
+        }
+        commit_and_present(&mut core, guard.backend)?;
+        last_frame = Instant::now();
+    }
+    Ok(())
+}
+
+/// Commit any queued scrollback rows, then redraw the live region.
+fn commit_and_present<S: InlineSink>(core: &mut AppCore, backend: &mut S) -> Result<(), Error> {
+    let (w, h) = core.size;
+    let committed = core.take_committed(w, h);
+    if !committed.is_empty() {
+        backend.commit(&committed)?;
+    }
+    let live = core.live_rows(w, h);
+    backend.present(&live)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::backend::TestBackend;
+    use crate::backend::inline::{InlineSink, RecordingSink};
+    use crate::component::Component;
+    use crate::hooks::Hooks;
+    use crate::props::{TextProps, ViewProps};
 
     #[test]
     fn restore_guard_leaves_on_drop() {
@@ -291,5 +421,60 @@ mod tests {
             let _guard = RestoreGuard { backend: &mut be };
         }
         assert_eq!(be.lifecycle, vec!["enter", "leave"]);
+    }
+
+    struct Inline;
+    impl Component for Inline {
+        type Props = ();
+        fn render(_: &(), hooks: &mut Hooks) -> Element {
+            let sb = hooks.use_scrollback();
+            hooks.use_effect((), move || {
+                sb.commit(Element::text(TextProps {
+                    content: "committed turn".into(),
+                    ..Default::default()
+                }));
+            });
+            Element::view(
+                ViewProps::default(),
+                vec![Element::text(TextProps {
+                    content: "> live prompt".into(),
+                    ..Default::default()
+                })],
+            )
+        }
+    }
+
+    #[test]
+    fn inline_splits_committed_scrollback_from_live_region() {
+        let mut core = AppCore::new(Element::component::<Inline>(()), (20, 6));
+        core.process_wakes(); // runs the mount effect, which queues a commit
+
+        let mut sink = RecordingSink::new(20, 6);
+        commit_and_present_into(&mut core, &mut sink);
+
+        // Finished output went to scrollback; the prompt stayed in the live region.
+        assert!(
+            sink.committed.iter().any(|l| l.contains("committed turn")),
+            "committed: {:?}",
+            sink.committed
+        );
+        assert!(
+            sink.live.iter().any(|l| l.contains("> live prompt")),
+            "live: {:?}",
+            sink.live
+        );
+        assert!(
+            !sink.live.iter().any(|l| l.contains("committed turn")),
+            "committed content must not remain in the live region"
+        );
+    }
+
+    // Test shim mirroring commit_and_present for a concrete sink.
+    fn commit_and_present_into<S: InlineSink>(core: &mut AppCore, sink: &mut S) {
+        let (w, h) = core.size;
+        let committed = core.take_committed(w, h);
+        sink.commit(&committed).unwrap();
+        let live = core.live_rows(w, h);
+        sink.present(&live).unwrap();
     }
 }

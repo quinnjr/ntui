@@ -2,9 +2,12 @@ use std::io;
 
 use crate::buffer::CellUpdate;
 
+pub(crate) mod ansi;
 pub mod fullscreen;
+pub mod inline;
 pub mod test;
 pub use fullscreen::FullscreenBackend;
+pub use inline::InlineBackend;
 pub use test::TestBackend;
 
 /// Terminal output target. `flush` receives only cells that changed since the previous frame.
