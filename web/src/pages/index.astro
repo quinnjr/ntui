@@ -1,0 +1,186 @@
+---
+import DocsLayout from '../layouts/DocsLayout.astro';
+import { withBase } from '../lib/url';
+
+const faqs = [
+  {
+    q: 'Is ntui published on crates.io?',
+    a: 'Yes — add `ntui = "0.1"` to your Cargo.toml dependencies.',
+  },
+  {
+    q: 'What Rust edition does ntui require?',
+    a: 'The 2024 edition, on a recent stable toolchain.',
+  },
+  {
+    q: 'Does ntui support mouse input?',
+    a: 'Not in v1 — only keyboard input is routed to components.',
+  },
+  {
+    q: 'What license is ntui under?',
+    a: 'Dual-licensed under MIT or Apache-2.0, at your option.',
+  },
+  {
+    q: 'How is ntui different from a widget-library TUI framework?',
+    a: 'ntui gives you components and hooks (use_state, use_effect, use_input, use_future, ...) over a real React-style reconciler and flexbox layout, rather than a fixed set of pre-built widgets.',
+  },
+  {
+    q: 'Can ntui render inline instead of fullscreen?',
+    a: 'Yes — render_inline() commits finished output into the terminal’s real scrollback via use_scrollback, while a live region redraws at the bottom.',
+  },
+];
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'SoftwareApplication',
+    name: 'ntui',
+    applicationCategory: 'DeveloperApplication',
+    operatingSystem: 'Linux, macOS, Windows',
+    description:
+      'An Ink-style TUI library for Rust: components, hooks, flexbox layout via taffy, and a retained fiber-tree reconciler with minimal-diff terminal output.',
+    programmingLanguage: 'Rust',
+    license: ['https://opensource.org/licenses/MIT', 'https://www.apache.org/licenses/LICENSE-2.0'],
+    codeRepository: 'https://github.com/quinnjr/ntui',
+    offers: {
+      '@type': 'Offer',
+      price: '0',
+      priceCurrency: 'USD',
+    },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'FAQPage',
+    mainEntity: faqs.map((f) => ({
+      '@type': 'Question',
+      name: f.q,
+      acceptedAnswer: { '@type': 'Answer', text: f.a },
+    })),
+  },
+];
+
+const features = [
+  {
+    title: 'Components + hooks',
+    body: '#[component] functions and use_state / use_effect / use_input / use_future / use_stream / use_context / use_scroll / use_scrollback / use_app — React’s hook rules, in Rust.',
+  },
+  {
+    title: 'element!',
+    body: 'A JSX-like macro for View/Text trees with typed props, keyed children, and #(...) for iterators and fragments.',
+  },
+  {
+    title: 'A real reconciler',
+    body: 'A retained, keyed fiber tree with props_eq short-circuiting for unchanged subtrees, and a bounded re-render loop for cascading updates.',
+  },
+  {
+    title: 'Flexbox layout',
+    body: 'Powered by taffy — flex_direction, gap, padding, margin, justify_content, align_items, flex_grow, percentage/cell dimensions, borders.',
+  },
+  {
+    title: 'Cell-diff painting',
+    body: 'Every frame paints into an in-memory buffer; only the cells that changed are written to the terminal.',
+  },
+  {
+    title: 'Fullscreen or inline',
+    body: 'render() for a classic alternate-screen app, or render_inline() to commit finished output into the terminal’s real scrollback.',
+  },
+];
+
+const snippet = `use ntui::{component, element, render, BorderStyle, Color, FlexDirection, KeyCode, Weight};
+
+#[component]
+fn Counter(hooks: &mut ntui::Hooks) -> ntui::Element {
+    let count = hooks.use_state(|| 0i32);
+    let app = hooks.use_app();
+    let c = count.clone();
+    hooks.use_input(move |ev, _| match ev.code {
+        KeyCode::Up => c.update(|n| *n += 1),
+        KeyCode::Down => c.update(|n| *n -= 1),
+        KeyCode::Char('q') => app.exit(),
+        _ => {}
+    });
+    element! {
+        View(flex_direction: FlexDirection::Column, padding: 1, border_style: BorderStyle::Round) {
+            Text(content: format!("count: {}", count.get()), weight: Weight::Bold)
+            Text(content: "↑/↓ to change · q to quit", color: Color::DarkGrey)
+        }
+    }
+}
+
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), ntui::Error> {
+    render(element!(Counter)).await
+}`;
+---
+
+<DocsLayout
+  title="ntui"
+  description="An Ink-style TUI library for Rust: components, hooks, flexbox layout, and a retained fiber-tree reconciler."
+  jsonLd={jsonLd}
+>
+  <section class="mx-auto max-w-3xl text-center">
+    <p class="mb-4 font-mono text-sm text-orange-300">▌ ntui</p>
+    <h1 class="text-4xl font-bold tracking-tight text-stone-50 sm:text-5xl">
+      An Ink-style TUI library, for Rust.
+    </h1>
+    <p class="mx-auto mt-5 max-w-2xl text-balance text-lg text-stone-400">
+      Build fullscreen (or inline) terminal UIs out of components and hooks, with a
+      React-style retained fiber tree, flexbox layout via <code class="text-stone-300">taffy</code>,
+      and minimal-diff terminal output via <code class="text-stone-300">crossterm</code>.
+    </p>
+    <div class="mt-8 flex flex-wrap items-center justify-center gap-3">
+      <a
+        href={withBase('docs/getting-started')}
+        class="rounded-md bg-orange-400 px-5 py-2.5 text-sm font-semibold text-stone-950 transition-colors hover:bg-orange-300"
+      >
+        Get started
+      </a>
+      <a
+        href="https://github.com/quinnjr/ntui"
+        class="rounded-md border border-stone-700 px-5 py-2.5 text-sm font-semibold text-stone-200 transition-colors hover:border-stone-500"
+      >
+        View on GitHub
+      </a>
+      <a
+        href="https://docs.rs/ntui"
+        class="rounded-md border border-stone-700 px-5 py-2.5 text-sm font-semibold text-stone-200 transition-colors hover:border-stone-500"
+      >
+        API reference
+      </a>
+    </div>
+  </section>
+
+  <section class="mx-auto mt-16 max-w-3xl">
+    <pre class="overflow-x-auto rounded-lg border border-stone-800 bg-stone-900 p-5 text-sm leading-relaxed text-stone-200"><code>{snippet}</code></pre>
+    <p class="mt-3 text-center text-sm text-stone-500">
+      Run it: <code class="text-stone-300">cargo run --example counter</code>
+    </p>
+  </section>
+
+  <section class="mx-auto mt-20 max-w-5xl">
+    <h2 class="text-center text-sm font-semibold uppercase tracking-wider text-stone-500">
+      Features
+    </h2>
+    <div class="mt-6 grid gap-6 sm:grid-cols-2 lg:grid-cols-3">
+      {features.map((f) => (
+        <div class="rounded-lg border border-stone-800 bg-stone-900/40 p-5">
+          <h3 class="font-semibold text-stone-100">{f.title}</h3>
+          <p class="mt-2 text-sm text-stone-400">{f.body}</p>
+        </div>
+      ))}
+    </div>
+  </section>
+
+  <section class="mx-auto mt-20 max-w-3xl">
+    <h2 class="text-center text-sm font-semibold uppercase tracking-wider text-stone-500">
+      Frequently asked questions
+    </h2>
+    <dl class="mt-6 space-y-6">
+      {faqs.map((f) => (
+        <div class="border-b border-stone-800 pb-6">
+          <dt class="font-semibold text-stone-100">{f.q}</dt>
+          <dd class="mt-2 text-sm text-stone-400">{f.a}</dd>
+        </div>
+      ))}
+    </dl>
+  </section>
+</DocsLayout>

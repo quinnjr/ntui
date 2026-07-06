@@ -1,16 +1,55 @@
 # ntui
 
 [![CI](https://github.com/quinnjr/ntui/actions/workflows/ci.yml/badge.svg)](https://github.com/quinnjr/ntui/actions/workflows/ci.yml)
+[![crates.io](https://img.shields.io/crates/v/ntui.svg)](https://crates.io/crates/ntui)
+[![docs.rs](https://docs.rs/ntui/badge.svg)](https://docs.rs/ntui)
+[![License: MIT OR Apache-2.0](https://img.shields.io/badge/license-MIT%20OR%20Apache--2.0-blue.svg)](#license)
 
-An Ink-style TUI library for Rust: build fullscreen terminal UIs out of
-components and hooks, with a React-style retained fiber tree, flexbox layout
-(via `taffy`), and minimal-diff terminal output (via `crossterm`).
+An [Ink](https://github.com/vadimdemedes/ink)-style TUI library for Rust: build
+fullscreen (or inline) terminal UIs out of components and hooks, with a
+React-style retained fiber tree, flexbox layout (via [`taffy`](https://github.com/DioxusLabs/taffy)),
+and minimal-diff terminal output (via [`crossterm`](https://github.com/crossterm-rs/crossterm)).
 
-If you've used [Ink](https://github.com/vadimdemedes/ink) for React/Node,
-the shape will be familiar: `#[component]` functions that call hooks
-(`use_state`, `use_effect`, `use_input`, ...) and return an `element!` tree of
-`View`/`Text` nodes; state changes trigger re-renders; the engine reconciles,
-lays out, paints, and diffs against the previous frame.
+If you've used Ink for React/Node, the shape will be familiar: `#[component]`
+functions that call hooks (`use_state`, `use_effect`, `use_input`, ...) and
+return an `element!` tree of `View`/`Text` nodes; state changes trigger
+re-renders; the engine reconciles, lays out, paints, and diffs against the
+previous frame before writing the minimal set of changed cells to the
+terminal.
+
+## Features
+
+- **Components + hooks**, not a widget library — `#[component]` functions and
+  `use_state` / `use_effect` / `use_input` / `use_future` / `use_stream` /
+  `use_context` / `use_terminal_size` / `use_scroll` / `use_scrollback` /
+  `use_app`, mirroring React's hook rules (identity by call order).
+- **`element!`**, a JSX-like macro for building `View`/`Text` trees with typed
+  props, keyed children, and `#(...)` for iterators/fragments.
+- **A real reconciler**, not a diff-and-repaint-everything loop: a retained
+  fiber tree keyed like React's, `props_eq` short-circuiting for subtrees that
+  didn't change, and a bounded re-render loop (mirroring React's max update
+  depth) for cascading `use_state` updates.
+- **Flexbox layout** via `taffy` — `flex_direction`, `gap`, `padding`,
+  `margin`, `justify_content`, `align_items`, `flex_grow`, percentage/cell
+  dimensions, borders.
+- **Cell-diff painting** — every frame paints into an in-memory buffer, then
+  only the changed cells are written to the terminal.
+- **Two rendering modes**: fullscreen (`render`, alternate screen + raw mode)
+  and inline (`render_inline`, commits finished output into the terminal's
+  real scrollback while a live region redraws at the bottom — see
+  [`use_scrollback`](#hooks-v1) and [`inline_chat.rs`](ntui/examples/inline_chat.rs)).
+- **Deterministic testing** without a TTY — `testing::TestTerminal` drives the
+  same engine headlessly, frame by frame, for assertions on rendered text and
+  input handling.
+
+## Installation
+
+```toml
+[dependencies]
+ntui = "0.1"
+```
+
+Requires Rust 2024 edition (a recent stable toolchain).
 
 ## Quickstart
 
@@ -56,9 +95,9 @@ more examples in the same directory:
   handler.
 - [`claude_code.rs`](ntui/examples/claude_code.rs) — a fuller Claude Code-style
   interface: welcome banner, `●` tool-call blocks with `⎿` results, an animated
-  "thinking" spinner with elapsed time, a bordered input with a blinking cursor,
-  a scrollable transcript that auto-follows streaming output (PgUp/PgDn to
-  scroll back), and interrupt-on-Esc.
+  "thinking" spinner with elapsed time, a full-width bordered input with a
+  blinking cursor, a scrollable transcript that auto-follows streaming output
+  (PgUp/PgDn to scroll back), and interrupt-on-Esc / quit-on-double-Ctrl-C.
 - [`inline_chat.rs`](ntui/examples/inline_chat.rs) — an **inline** chat that
   commits finished turns into the terminal's real scrollback (`render_inline` +
   `use_scrollback`) while a live region streams the reply at the bottom.
@@ -76,6 +115,22 @@ more examples in the same directory:
 | `use_scroll` | Scroll position for an `Overflow::Scroll` view; auto-follows the bottom |
 | `use_scrollback` | Commit finished output into the terminal's real scrollback (inline mode) |
 | `use_app` | App handle: `exit()`, request redraw |
+
+## Development
+
+```bash
+cargo test --workspace                                   # full suite (lib tests + macro tests + doctests)
+cargo clippy --workspace --all-targets -- -D warnings    # lint gate
+cargo fmt --all -- --check                               # formatting gate
+cargo build --examples -p ntui                           # compile-check examples
+cargo bench -p ntui --features bench                     # engine benchmarks
+```
+
+CI (`.github/workflows/ci.yml`) runs the above on stable and nightly with
+`RUSTFLAGS=-D warnings`, plus fuzz smoke tests (`wrap_text`, `truncate_line`,
+`render_text`) from the standalone `fuzz/` cargo-fuzz workspace. See
+[`CLAUDE.md`](CLAUDE.md) for the render pipeline architecture and codebase
+conventions.
 
 ## v1 limitations
 
@@ -99,3 +154,10 @@ more examples in the same directory:
 Full design rationale, the fiber/reconciler/layout/paint pipeline, and the
 `Backend` trait are documented in
 [`docs/superpowers/specs/2026-07-02-ntui-design.md`](docs/superpowers/specs/2026-07-02-ntui-design.md).
+See also [`docs/`](docs/) for an architecture guide and hooks reference, also
+published at <https://quinnjr.github.io/ntui/> (source in [`web/`](web/)).
+
+## License
+
+Licensed under either of [Apache License, Version 2.0](LICENSE-APACHE) or
+[MIT license](LICENSE-MIT) at your option.

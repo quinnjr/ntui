@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://quinnjr.github.io/ntui/sitemap-index.xml

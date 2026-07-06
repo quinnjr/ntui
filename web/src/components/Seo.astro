@@ -1,0 +1,41 @@
+---
+import { withBase } from '../lib/url';
+
+interface Props {
+  title: string;
+  description: string;
+  /** "website" for the landing page, "article" for docs pages. */
+  type?: 'website' | 'article';
+  /** JSON-LD graph node(s) to embed for this page (SoftwareApplication, TechArticle, BreadcrumbList, FAQPage, ...). */
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const { title, description, type = 'website', jsonLd } = Astro.props;
+
+const pageTitle = title === 'ntui' ? 'ntui — an Ink-style TUI library for Rust' : `${title} · ntui`;
+const canonicalURL = new URL(Astro.url.pathname, Astro.site);
+const ogImage = new URL(withBase('og.svg'), Astro.site).toString();
+
+const jsonLdNodes = jsonLd ? (Array.isArray(jsonLd) ? jsonLd : [jsonLd]) : [];
+---
+
+<title>{pageTitle}</title>
+<meta name="description" content={description} />
+<link rel="canonical" href={canonicalURL} />
+<meta name="robots" content="index, follow" />
+
+<!-- Open Graph -->
+<meta property="og:type" content={type} />
+<meta property="og:title" content={pageTitle} />
+<meta property="og:description" content={description} />
+<meta property="og:url" content={canonicalURL} />
+<meta property="og:image" content={ogImage} />
+<meta property="og:site_name" content="ntui" />
+
+<!-- Twitter -->
+<meta name="twitter:card" content="summary_large_image" />
+<meta name="twitter:title" content={pageTitle} />
+<meta name="twitter:description" content={description} />
+<meta name="twitter:image" content={ogImage} />
+
+{jsonLdNodes.map((node) => <script type="application/ld+json" is:inline set:html={JSON.stringify(node)} />)}

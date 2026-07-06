@@ -1,0 +1,80 @@
+---
+import '../styles/global.css';
+import { DOCS_NAV } from '../lib/docsNav';
+import { withBase } from '../lib/url';
+import Seo from '../components/Seo.astro';
+
+interface Props {
+  title: string;
+  description: string;
+  activeSlug?: string;
+  type?: 'website' | 'article';
+  jsonLd?: Record<string, unknown> | Record<string, unknown>[];
+}
+
+const { title, description, activeSlug, type = 'website', jsonLd } = Astro.props;
+---
+
+<!doctype html>
+<html lang="en" class="scroll-smooth">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <Seo title={title} description={description} type={type} jsonLd={jsonLd} />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns=%22http://www.w3.org/2000/svg%22 viewBox=%220 0 100 100%22><text y=%22.9em%22 font-size=%2290%22>▌</text></svg>"
+    />
+  </head>
+  <body class="min-h-screen bg-stone-950 text-stone-200 antialiased">
+    <div class="mx-auto flex min-h-screen max-w-6xl flex-col">
+      <header class="flex items-center justify-between border-b border-stone-800 px-6 py-4">
+        <a href={withBase('/')} class="flex items-center gap-2 font-mono text-sm font-semibold text-stone-100">
+          <span class="text-orange-400">▌</span>
+          ntui
+        </a>
+        <nav class="flex items-center gap-5 text-sm text-stone-400">
+          <a href={withBase('docs/getting-started')} class="hover:text-stone-100">Docs</a>
+          <a href="https://docs.rs/ntui" class="hover:text-stone-100">API</a>
+          <a href="https://github.com/quinnjr/ntui" class="hover:text-stone-100">GitHub</a>
+        </nav>
+      </header>
+
+      <div class="flex flex-1">
+        <aside class="hidden w-56 shrink-0 border-r border-stone-800 px-4 py-8 md:block">
+          <p class="mb-3 px-2 text-xs font-semibold uppercase tracking-wider text-stone-500">
+            Documentation
+          </p>
+          <ul class="space-y-1">
+            {DOCS_NAV.map((item) => (
+              <li>
+                <a
+                  href={withBase(`docs/${item.slug}`)}
+                  class:list={[
+                    'block rounded-md px-2 py-1.5 text-sm transition-colors',
+                    activeSlug === item.slug
+                      ? 'bg-orange-400/10 text-orange-300'
+                      : 'text-stone-400 hover:bg-stone-900 hover:text-stone-100',
+                  ]}
+                >
+                  {item.title}
+                </a>
+              </li>
+            ))}
+          </ul>
+        </aside>
+
+        <main class="min-w-0 flex-1 px-6 py-10 sm:px-10">
+          <slot />
+        </main>
+      </div>
+
+      <footer class="border-t border-stone-800 px-6 py-6 text-center text-xs text-stone-500">
+        Licensed under
+        <a href="https://github.com/quinnjr/ntui/blob/develop/LICENSE-MIT" class="underline hover:text-stone-300">MIT</a>
+        or
+        <a href="https://github.com/quinnjr/ntui/blob/develop/LICENSE-APACHE" class="underline hover:text-stone-300">Apache-2.0</a>.
+      </footer>
+    </div>
+  </body>
+</html>
