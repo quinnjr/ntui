@@ -7,7 +7,7 @@
 //!
 //! Run: `cargo run --example claude_code`
 //! Keys: type + Enter to send · PgUp/PgDn scroll history · Esc interrupts a
-//! reply (or quits when idle).
+//! reply (or quits when idle) · Ctrl-C twice quits.
 //!
 //! The transcript is an `Overflow::Scroll` box driven by `use_scroll`: it
 //! auto-follows the bottom as replies stream, and PgUp/PgDn scroll back.
@@ -15,8 +15,8 @@
 use std::time::Duration;
 
 use ntui::{
-    BorderStyle, Color, Element, FlexDirection, KeyCode, Overflow, Weight, component, element,
-    render,
+    BorderStyle, Color, Dimension, Element, FlexDirection, KeyCode, KeyModifiers, Overflow, Weight,
+    component, element, render,
 };
 
 /// Anthropic clay/orange accent.
@@ -86,6 +86,7 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
     let start = hooks.use_state(|| 0usize); // frame the current turn began
     let verb = hooks.use_state(|| VERBS[0]);
     let generation = hooks.use_state(|| 0u64); // bumped to cancel a turn
+    let confirm_exit = hooks.use_state(|| false); // armed by a first ctrl-c
     let scroll = hooks.use_scroll(); // transcript scroll position (auto-follows)
     let app = hooks.use_app();
 
@@ -108,80 +109,94 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
     );
     let cur_frame = frame.clone();
     let sc = scroll.clone();
-    hooks.use_input(move |ev, _| match ev.code {
-        KeyCode::Char(c) => d.update(|s| s.push(c)),
-        KeyCode::Backspace => d.update(|s| {
-            s.pop();
-        }),
-        KeyCode::PageUp => sc.scroll_by(-5),
-        KeyCode::PageDown => sc.scroll_by(5),
-        KeyCode::Esc => {
-            if w.get() {
-                g.update(|n| *n += 1); // cancel the in-flight turn
-                w.set(false);
-                m.update(|ms| ms.push(Block::Assistant("[interrupted]".into())));
-            } else {
+    let ce = confirm_exit.clone();
+    hooks.use_input(move |ev, _| {
+        if ev.code == KeyCode::Char('c') && ev.modifiers.contains(KeyModifiers::CONTROL) {
+            if ce.get() {
                 app.exit();
+            } else {
+                ce.set(true);
+                m.update(|ms| ms.push(Block::Assistant("(press ctrl-c again to exit)".into())));
             }
+            return;
         }
-        KeyCode::Enter => {
-            let text = d.get();
-            if text.trim().is_empty() {
-                return;
+        ce.set(false);
+
+        match ev.code {
+            KeyCode::Char(c) => d.update(|s| s.push(c)),
+            KeyCode::Backspace => d.update(|s| {
+                s.pop();
+            }),
+            KeyCode::PageUp => sc.scroll_by(-5),
+            KeyCode::PageDown => sc.scroll_by(5),
+            KeyCode::Esc => {
+                if w.get() {
+                    g.update(|n| *n += 1); // cancel the in-flight turn
+                    w.set(false);
+                    m.update(|ms| ms.push(Block::Assistant("[interrupted]".into())));
+                } else {
+                    app.exit();
+                }
             }
-            d.set(String::new());
-            m.update(|ms| ms.push(Block::User(text.clone())));
-            g.update(|n| *n += 1);
-            let my_gen = g.get();
-            w.set(true);
-            sf.set(cur_frame.get());
-            vb.set(VERBS[text.len() % VERBS.len()]);
-
-            // Fake assistant turn: think → tool call → stream a reply.
-            let (m2, w2, g2) = (m.clone(), w.clone(), g.clone());
-            tokio::spawn(async move {
-                tokio::time::sleep(Duration::from_millis(650)).await;
-                if g2.get() != my_gen {
+            KeyCode::Enter => {
+                let text = d.get();
+                if text.trim().is_empty() {
                     return;
                 }
-                m2.update(|ms| {
-                    ms.push(Block::Tool {
-                        name: "Read".into(),
-                        arg: "src/main.rs".into(),
-                        result: String::new(),
-                    })
-                });
-                tokio::time::sleep(Duration::from_millis(500)).await;
-                if g2.get() != my_gen {
-                    return;
-                }
-                m2.update(|ms| {
-                    if let Some(Block::Tool { result, .. }) = ms.last_mut() {
-                        *result = "Read 42 lines".into();
-                    }
-                });
+                d.set(String::new());
+                m.update(|ms| ms.push(Block::User(text.clone())));
+                g.update(|n| *n += 1);
+                let my_gen = g.get();
+                w.set(true);
+                sf.set(cur_frame.get());
+                vb.set(VERBS[text.len() % VERBS.len()]);
 
-                m2.update(|ms| ms.push(Block::Assistant(String::new())));
-                let reply = format!(
-                    "Looking at \"{}\" — I'd start in main.rs, trace the call path, \
-                     and add a focused test before touching the logic.",
-                    text.trim()
-                );
-                for ch in reply.chars() {
-                    tokio::time::sleep(Duration::from_millis(16)).await;
+                // Fake assistant turn: think → tool call → stream a reply.
+                let (m2, w2, g2) = (m.clone(), w.clone(), g.clone());
+                tokio::spawn(async move {
+                    tokio::time::sleep(Duration::from_millis(650)).await;
                     if g2.get() != my_gen {
                         return;
                     }
                     m2.update(|ms| {
-                        if let Some(Block::Assistant(s)) = ms.last_mut() {
-                            s.push(ch);
+                        ms.push(Block::Tool {
+                            name: "Read".into(),
+                            arg: "src/main.rs".into(),
+                            result: String::new(),
+                        })
+                    });
+                    tokio::time::sleep(Duration::from_millis(500)).await;
+                    if g2.get() != my_gen {
+                        return;
+                    }
+                    m2.update(|ms| {
+                        if let Some(Block::Tool { result, .. }) = ms.last_mut() {
+                            *result = "Read 42 lines".into();
                         }
                     });
-                }
-                w2.set(false);
-            });
+
+                    m2.update(|ms| ms.push(Block::Assistant(String::new())));
+                    let reply = format!(
+                        "Looking at \"{}\" — I'd start in main.rs, trace the call path, \
+                     and add a focused test before touching the logic.",
+                        text.trim()
+                    );
+                    for ch in reply.chars() {
+                        tokio::time::sleep(Duration::from_millis(16)).await;
+                        if g2.get() != my_gen {
+                            return;
+                        }
+                        m2.update(|ms| {
+                            if let Some(Block::Assistant(s)) = ms.last_mut() {
+                                s.push(ch);
+                            }
+                        });
+                    }
+                    w2.set(false);
+                });
+            }
+            _ => {}
         }
-        _ => {}
     });
 
     // The whole transcript is rendered into a scroll box; it auto-follows the
@@ -208,7 +223,7 @@ fn App(hooks: &mut ntui::Hooks) -> Element {
     let cursor = if frame.get() % 8 < 4 { "▌" } else { " " };
 
     element! {
-        View(flex_direction: FlexDirection::Column, padding: 1) {
+        View(flex_direction: FlexDirection::Column, width: Dimension::Percent(100.0), padding: 1) {
             View(
                 flex_direction: FlexDirection::Column,
                 border_style: BorderStyle::Round,
