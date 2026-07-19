@@ -1,0 +1,240 @@
+---
+import DocsLayout from '../../layouts/DocsLayout.astro';
+import { DOCS_NAV } from '../../lib/docsNav';
+import { withBase } from '../../lib/url';
+
+const nav = DOCS_NAV.find((item) => item.slug === 'primitives')!;
+const canonicalPath = withBase('docs/primitives');
+
+const jsonLd = [
+  {
+    '@context': 'https://schema.org',
+    '@type': 'TechArticle',
+    headline: nav.title,
+    description: nav.description,
+    author: { '@type': 'Organization', name: 'ntui' },
+    isPartOf: { '@type': 'WebSite', name: 'ntui', url: new URL(withBase('/'), Astro.site).toString() },
+  },
+  {
+    '@context': 'https://schema.org',
+    '@type': 'BreadcrumbList',
+    itemListElement: [
+      { '@type': 'ListItem', position: 1, name: 'ntui', item: new URL(withBase('/'), Astro.site).toString() },
+      { '@type': 'ListItem', position: 2, name: 'Docs', item: new URL(withBase('docs/getting-started'), Astro.site).toString() },
+      { '@type': 'ListItem', position: 3, name: nav.title, item: new URL(canonicalPath, Astro.site).toString() },
+    ],
+  },
+];
+
+const primitives = [
+  {
+    tag: 'Node::View',
+    name: 'View',
+    diagram: '┌─────────┐\n│ ▢  ▢  ▢ │\n└─────────┘',
+    body: "A flexbox layout box, laid out by Taffy, holding any number of children. This is the only node that occupies space by its own rules — everything else is positioned inside one.",
+    sig: 'Element::view(props: ViewProps, children: Vec<Element>)',
+  },
+  {
+    tag: 'Node::Text',
+    name: 'Text',
+    diagram: '▬▬▬ ▬▬▬▬▬\n▬▬ ▬▬▬▬ ▬▬',
+    body: "A leaf run of styled glyphs. It measures itself against the terminal's character grid and writes directly into cells — there is no nested markup inside a Text node.",
+    sig: 'Element::text(props: TextProps)',
+  },
+  {
+    tag: 'Node::Fragment',
+    name: 'Fragment',
+    diagram: ' ▢    ▢    ▢\n (no box of\n  its own)',
+    body: "Groups sibling elements for the reconciler without introducing a layout box. Useful when a component needs to return more than one child without changing the flexbox tree.",
+    sig: 'Element::fragment(children: Vec<Element>)',
+  },
+  {
+    tag: 'Node::Provider',
+    name: 'Provider',
+    diagram: '⎡ ▢  ▢  ▢ ⎤\n   context',
+    body: 'Makes one value available to every descendant component’s use_context, scoped to its children. Nothing renders differently — it only changes what’s reachable below it.',
+    sig: 'Element::provider::<T>(value: T, children: Vec<Element>)',
+  },
+  {
+    tag: 'Node::Component',
+    name: 'Component',
+    diagram: '┌ ─ ─ ─ ┐\n│ ⟨ C ⟩ │\n└ ─ ─ ─ ┘',
+    body: 'A nested instance of another component, boxed and type-erased, rendered on its own fiber with its own hooks. This is how the four nodes above ever get to compose at all.',
+    sig: 'Element::component::<C>(props: C::Props)',
+  },
+];
+---
+
+<DocsLayout title={nav.title} description={nav.description} activeSlug={nav.slug} type="article" jsonLd={jsonLd}>
+  <div class="max-w-none">
+    <div class="flex justify-center overflow-x-auto rounded-md border border-stone-800 bg-stone-900/60 p-5">
+      <canvas
+        id="tv"
+        width="368"
+        height="196"
+        role="img"
+        aria-label="Animated terminal frame showing an ntui Counter component redrawing only its changed cells on each render"
+      ></canvas>
+    </div>
+    <p class="mt-3 text-center font-mono text-xs tracking-wide text-stone-500">
+      every frame is a grid · only the <span class="text-orange-400">changed cells</span> repaint
+    </p>
+
+    <p class="mt-10 font-mono text-xs uppercase tracking-widest text-stone-500">ntui / src / element.rs</p>
+    <h1 class="mt-2 text-3xl font-semibold tracking-tight text-stone-100 sm:text-4xl">
+      The five shapes a terminal tree can take
+    </h1>
+    <p class="mt-4 max-w-2xl text-stone-400">
+      ntui ships no buttons, no lists, no widget kit. Every component you write eventually lowers
+      to one of <strong class="text-stone-200">five</strong> node kinds, reconciled into a fiber
+      tree and painted as a grid of cells. That's the whole vocabulary.
+    </p>
+
+    <div class="mt-12 border-t border-stone-800">
+      {primitives.map((p) => (
+        <div class="grid grid-cols-1 gap-4 border-b border-stone-800 py-8 transition-colors hover:bg-stone-900/40 sm:grid-cols-[7rem_1fr] sm:gap-6">
+          <pre class="whitespace-pre pt-0.5 font-mono text-xs leading-relaxed text-orange-400/80">{p.diagram}</pre>
+          <div>
+            <p class="mb-1 font-mono text-xs text-stone-500">{p.tag}</p>
+            <h2 class="text-xl font-semibold tracking-tight text-stone-100">{p.name}</h2>
+            <p class="mt-2 max-w-xl text-stone-400">{p.body}</p>
+            <code class="mt-3 inline-block max-w-full overflow-x-auto rounded border border-stone-800 bg-stone-900 px-2.5 py-1.5 font-mono text-sm text-orange-200">
+              {p.sig}
+            </code>
+          </div>
+        </div>
+      ))}
+    </div>
+
+    <p class="mt-8 max-w-2xl text-sm text-stone-400">
+      Any element can also carry a reconciliation key, so the fiber tree can tell a moved sibling
+      from a replaced one across renders — mainly for list items:
+      <code class="ml-1 rounded border border-stone-800 bg-stone-900 px-1.5 py-0.5 font-mono text-orange-200">
+        el.with_key("row-3")
+      </code>
+    </p>
+
+    <div class="mt-12 border-t border-stone-800 pt-8">
+      <p class="max-w-2xl text-stone-400">
+        <strong class="text-stone-200">No sixth primitive is coming.</strong> Buttons, lists, and
+        scroll regions are all just Views and Text, composed by your own components — which is
+        also why the widget-style escape hatches you'd expect from a TUI framework (mouse
+        regions, prebuilt lists) are still out of scope by design.
+      </p>
+    </div>
+  </div>
+
+  <nav class="mt-12 flex justify-between border-t border-stone-800 pt-6 text-sm">
+    {(() => {
+      const idx = DOCS_NAV.findIndex((i) => i.slug === nav.slug);
+      const prev = DOCS_NAV[idx - 1];
+      const next = DOCS_NAV[idx + 1];
+      return (
+        <>
+          <span>
+            {prev && (
+              <a href={withBase(`docs/${prev.slug}`)} class="text-stone-400 hover:text-orange-300">
+                ← {prev.title}
+              </a>
+            )}
+          </span>
+          <span>
+            {next && (
+              <a href={withBase(`docs/${next.slug}`)} class="text-stone-400 hover:text-orange-300">
+                {next.title} →
+              </a>
+            )}
+          </span>
+        </>
+      );
+    })()}
+  </nav>
+</DocsLayout>
+
+<script>
+  (function () {
+    const canvas = document.getElementById('tv') as HTMLCanvasElement | null;
+    if (!canvas) return;
+    const ctx = canvas.getContext('2d');
+    if (!ctx) return;
+
+    const cols = 23;
+    const rows = 7;
+    const cell = 16;
+    const cellH = 28;
+    canvas.width = cols * cell;
+    canvas.height = rows * cellH;
+
+    function frame(n: string) {
+      const g: string[][] = [];
+      for (let r = 0; r < rows; r++) g.push(new Array(cols).fill(' '));
+      function put(row: number, col: number, str: string) {
+        for (let i = 0; i < str.length && col + i < cols; i++) g[row][col + i] = str[i];
+      }
+      put(0, 0, '┌' + '─'.repeat(cols - 2) + '┐');
+      put(1, 0, '│ Counter' + ' '.repeat(cols - 10) + '│');
+      put(2, 0, '│' + ' '.repeat(cols - 2) + '│');
+      put(3, 0, '│   ' + n + ' '.repeat(cols - 6) + '│');
+      put(4, 0, '│' + ' '.repeat(cols - 2) + '│');
+      put(5, 0, '│ [+] increment' + ' '.repeat(cols - 17) + '│');
+      put(6, 0, '└' + '─'.repeat(cols - 2) + '┘');
+      return g;
+    }
+
+    const frames = [frame('0'), frame('1'), frame('2')];
+    const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+    // Tailwind stone-950/stone-900/stone-400/stone-100/orange-400, sampled to match the site theme.
+    const paper = '#1c1917';
+    const ink = '#f5f5f4';
+    const soft = '#a8a29e';
+    const signal = '#fb923c';
+
+    function draw(idx: number, flashCells: Record<string, boolean> | null) {
+      ctx!.fillStyle = paper;
+      ctx!.fillRect(0, 0, canvas!.width, canvas!.height);
+      ctx!.font = '15px ui-monospace, "JetBrains Mono", Menlo, Consolas, monospace';
+      ctx!.textBaseline = 'middle';
+
+      const g = frames[idx];
+      for (let r = 0; r < rows; r++) {
+        for (let c = 0; c < cols; c++) {
+          const ch = g[r][c];
+          if (ch === ' ') continue;
+          const flashed = flashCells && flashCells[r + ',' + c];
+          if (flashed) {
+            ctx!.fillStyle = signal + '33';
+            ctx!.fillRect(c * cell, r * cellH, cell, cellH);
+          }
+          const isRule = ch === '│' || ch === '┌' || ch === '┐' || ch === '└' || ch === '┘' || ch === '─';
+          ctx!.fillStyle = flashed ? signal : isRule ? soft : ink;
+          ctx!.fillText(ch, c * cell + cell / 2, r * cellH + cellH / 2 + 1);
+        }
+      }
+    }
+
+    function diff(a: string[][], b: string[][]) {
+      const out: Record<string, boolean> = {};
+      for (let r = 0; r < rows; r++)
+        for (let c = 0; c < cols; c++) if (a[r][c] !== b[r][c]) out[r + ',' + c] = true;
+      return out;
+    }
+
+    if (reduced) {
+      draw(1, diff(frames[0], frames[1]));
+      return;
+    }
+
+    let i = 0;
+    draw(0, null);
+    setInterval(function () {
+      const next = (i + 1) % frames.length;
+      const changed = diff(frames[i], frames[next]);
+      draw(next, changed);
+      i = next;
+      setTimeout(function () {
+        draw(i, null);
+      }, 420);
+    }, 1600);
+  })();
+</script>

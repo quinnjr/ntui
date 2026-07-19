@@ -14,6 +14,11 @@ export const DOCS_NAV: NavItem[] = [
     description: 'Install ntui, build your first component, understand the render loop.',
   },
   {
+    slug: 'primitives',
+    title: 'Primitives',
+    description: 'The five element kinds every component lowers to: View, Text, Fragment, Provider, Component.',
+  },
+  {
     slug: 'hooks',
     title: 'Hooks',
     description: 'Every hook, its signature, and when to reach for it.',
