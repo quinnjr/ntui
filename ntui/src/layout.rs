@@ -4,8 +4,8 @@ use taffy::prelude::*;
 
 use crate::fiber::{FiberId, FiberKind, FiberTree, Rect};
 use crate::props::{
-    AlignItems as NAlign, Dimension as NDim, FlexDirection as NFlex, JustifyContent as NJustify,
-    Overflow as NOverflow, TextWrap, ViewProps,
+    AlignItems as NAlign, Anchor, Dimension as NDim, FlexDirection as NFlex,
+    JustifyContent as NJustify, Overflow as NOverflow, TextWrap, ViewProps,
 };
 use crate::style::BorderStyle;
 use crate::text::{truncate_line, wrap_text};
@@ -13,6 +13,12 @@ use crate::text::{truncate_line, wrap_text};
 pub(crate) struct TextContext {
     content: String,
     wrap: TextWrap,
+    /// Lines computed by `measure_text` for the last width it was asked
+    /// about, so the post-layout pass can reuse them instead of re-running
+    /// `wrap_text`/`truncate_line` from scratch when the final resolved
+    /// width matches what was measured. Keyed by that width; a mismatch
+    /// means a stale cache that must be recomputed, never reused.
+    cached: std::cell::RefCell<Option<(u16, Vec<String>)>>,
 }
 
 /// Rebuild the taffy tree from the fiber tree, solve, and write Rects back.
@@ -46,26 +52,61 @@ pub(crate) fn compute_layout(tree: &mut FiberTree, width: u16, height: u16) {
         )
         .unwrap();
 
+    // Overlay nodes (`ViewProps.overlay`) need their *own* rect placed against the whole
+    // viewport rather than wherever taffy's own (`position: Absolute`)
+    // resolution would put them — but critically, `walk_abs` must apply that
+    // same correction as the *origin* it hands down to their descendants
+    // too, or a "background" text sitting deep inside e.g. `widgets::Toast`
+    // ends up positioned relative to taffy's uncorrected location instead of
+    // the corrected one, landing nowhere near its own overlay box.
+    let overlay_anchors: HashMap<NodeId, Anchor> = pairs
+        .iter()
+        .filter_map(|(fid, node)| match &tree.get(*fid).kind {
+            FiberKind::View(p) => p.overlay.map(|anchor| (*node, anchor)),
+            _ => None,
+        })
+        .collect();
+
     let mut abs: HashMap<NodeId, (f32, f32)> = HashMap::new();
-    walk_abs(&taffy, root_node, (0.0, 0.0), &mut abs);
+    walk_abs(
+        &taffy,
+        root_node,
+        (0.0, 0.0),
+        &mut abs,
+        &overlay_anchors,
+        (width, height),
+    );
     for (fid, node) in pairs {
         let l = taffy.layout(node).unwrap();
+        let w = l.size.width.round() as u16;
+        let h = l.size.height.round() as u16;
+        let fiber = tree.get_mut(fid);
         let (x, y) = abs[&node];
         let rect = Rect {
             x: x.round() as u16,
             y: y.round() as u16,
-            width: l.size.width.round() as u16,
-            height: l.size.height.round() as u16,
+            width: w,
+            height: h,
         };
-        let fiber = tree.get_mut(fid);
         fiber.layout = rect;
         // Wrap/truncate once here at the final resolved width so `paint` (which
         // runs every frame, even when layout is cached) reuses these lines
         // instead of re-wrapping. Refilled each pass so stale lines from a
-        // previous frame can never be painted.
+        // previous frame can never be painted. For `TextWrap::Wrap`, reuse
+        // `measure_text`'s cached lines when they were already computed for
+        // this exact final width, instead of re-running `wrap_text`.
         fiber.wrapped = match &fiber.kind {
             FiberKind::Text(props) => Some(match props.wrap {
-                TextWrap::Wrap => wrap_text(&props.content, rect.width as usize),
+                TextWrap::Wrap => {
+                    let cached = taffy.get_node_context(node).and_then(|ctx| {
+                        let cached = ctx.cached.borrow();
+                        cached
+                            .as_ref()
+                            .filter(|(w, _)| *w == rect.width)
+                            .map(|(_, lines)| lines.clone())
+                    });
+                    cached.unwrap_or_else(|| wrap_text(&props.content, rect.width as usize))
+                }
                 TextWrap::Truncate => {
                     vec![truncate_line(&props.content, rect.width as usize)]
                 }
@@ -109,6 +150,7 @@ fn build_nodes(
                     TextContext {
                         content: props.content.clone(),
                         wrap: props.wrap,
+                        cached: std::cell::RefCell::new(None),
                     },
                 )
                 .unwrap();
@@ -131,6 +173,15 @@ fn view_style(p: &ViewProps) -> Style {
     };
     Style {
         display: Display::Flex,
+        // Absolute takes it out of its parent's flex flow (no space
+        // reserved, doesn't push siblings); `compute_layout` then overrides
+        // its resolved position to center it against the viewport, ignoring
+        // whatever positioning-context taffy would otherwise have used.
+        position: if p.overlay.is_some() {
+            Position::Absolute
+        } else {
+            Position::Relative
+        },
         flex_direction: match p.flex_direction {
             NFlex::Row => FlexDirection::Row,
             NFlex::Column => FlexDirection::Column,
@@ -206,6 +257,12 @@ fn measure_text(
             let lines = wrap_text(&ctx.content, max_w as usize);
             let w = lines.iter().map(|l| l.chars().count()).max().unwrap_or(0) as f32;
             let h = lines.len().max(1) as f32;
+            // Stash for the post-layout pass to reuse if the final resolved
+            // width matches — taffy may call this measure fn more than once
+            // per node while solving, so this just keeps the *last* measured
+            // width/lines, which is cheap and correct either way: a mismatch
+            // at reuse time falls back to recomputing from scratch.
+            *ctx.cached.borrow_mut() = Some((max_w as u16, lines));
             Size {
                 width: known.width.unwrap_or(w),
                 height: known.height.unwrap_or(h),
@@ -219,13 +276,49 @@ fn walk_abs(
     node: NodeId,
     origin: (f32, f32),
     abs: &mut HashMap<NodeId, (f32, f32)>,
+    overlay_anchors: &HashMap<NodeId, Anchor>,
+    viewport: (u16, u16),
 ) {
     let l = taffy.layout(node).unwrap();
-    let pos = (origin.0 + l.location.x, origin.1 + l.location.y);
+    let pos = if let Some(&anchor) = overlay_anchors.get(&node) {
+        overlay_position(
+            anchor,
+            l.size.width.round() as u16,
+            l.size.height.round() as u16,
+            viewport,
+        )
+    } else {
+        (origin.0 + l.location.x, origin.1 + l.location.y)
+    };
     abs.insert(node, pos);
     for c in taffy.children(node).unwrap() {
-        walk_abs(taffy, c, pos, abs);
+        walk_abs(taffy, c, pos, abs, overlay_anchors, viewport);
     }
+}
+
+/// Where an overlay box of size `w`×`h` lands against a
+/// `viewport`-sized screen, as `f32` so it composes with `walk_abs`'s
+/// location arithmetic. Corner anchors sit `EDGE_MARGIN` cells in.
+fn overlay_position(anchor: Anchor, w: u16, h: u16, viewport: (u16, u16)) -> (f32, f32) {
+    const EDGE_MARGIN: u16 = 1;
+    let (vw, vh) = viewport;
+    let (x, y) = match anchor {
+        Anchor::Center => (vw.saturating_sub(w) / 2, vh.saturating_sub(h) / 2),
+        Anchor::TopLeft => (EDGE_MARGIN, EDGE_MARGIN),
+        Anchor::TopRight => (
+            vw.saturating_sub(w).saturating_sub(EDGE_MARGIN),
+            EDGE_MARGIN,
+        ),
+        Anchor::BottomLeft => (
+            EDGE_MARGIN,
+            vh.saturating_sub(h).saturating_sub(EDGE_MARGIN),
+        ),
+        Anchor::BottomRight => (
+            vw.saturating_sub(w).saturating_sub(EDGE_MARGIN),
+            vh.saturating_sub(h).saturating_sub(EDGE_MARGIN),
+        ),
+    };
+    (x as f32, y as f32)
 }
 
 #[cfg(test)]
@@ -394,5 +487,335 @@ mod tests {
         let mut tree = FiberTree::new(); // no root -> early return
         compute_layout(&mut tree, 10, 5);
         assert_eq!(tree.root, None, "no root: layout leaves the tree untouched");
+    }
+
+    #[test]
+    fn overlay_layer_is_centered_in_the_viewport_regardless_of_nesting() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        // Deeply nested, off to one side — should make no difference: an
+        // overlay is centered against the whole viewport, not its ancestors.
+        let root = tree.mount_root(
+            Element::view(
+                ViewProps {
+                    justify_content: crate::props::JustifyContent::End,
+                    width: Dimension::Cells(20),
+                    height: Dimension::Cells(10),
+                    ..Default::default()
+                },
+                vec![Element::view(
+                    ViewProps {
+                        width: Dimension::Cells(1),
+                        height: Dimension::Cells(1),
+                        ..Default::default()
+                    },
+                    vec![Element::view(
+                        ViewProps {
+                            overlay: Some(crate::props::Anchor::Center),
+                            width: Dimension::Cells(6),
+                            height: Dimension::Cells(4),
+                            ..Default::default()
+                        },
+                        vec![],
+                    )],
+                )],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        let overlay = tree.get(tree.get(root).children[0]).children[0];
+        // (20-6)/2 = 7, (10-4)/2 = 3.
+        assert_eq!(
+            tree.get(overlay).layout,
+            Rect {
+                x: 7,
+                y: 3,
+                width: 6,
+                height: 4
+            }
+        );
+    }
+
+    #[test]
+    fn overlay_layer_does_not_affect_its_parents_size() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::view(
+                ViewProps {
+                    width: Dimension::Cells(2),
+                    height: Dimension::Cells(2),
+                    ..Default::default()
+                },
+                vec![Element::view(
+                    ViewProps {
+                        overlay: Some(crate::props::Anchor::Center),
+                        width: Dimension::Cells(15),
+                        height: Dimension::Cells(8),
+                        ..Default::default()
+                    },
+                    vec![],
+                )],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        assert_eq!(
+            tree.get(root).layout,
+            Rect {
+                x: 0,
+                y: 0,
+                width: 2,
+                height: 2
+            },
+            "an out-of-flow overlay child must not grow its parent"
+        );
+    }
+
+    #[test]
+    fn overlay_layer_top_right_anchor_sits_in_the_top_right_corner() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::view(
+                ViewProps {
+                    overlay: Some(crate::props::Anchor::TopRight),
+                    width: Dimension::Cells(4),
+                    height: Dimension::Cells(1),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        // width=4, EDGE_MARGIN=1: expect x = 20-4-1 = 15, y = 1.
+        assert_eq!(
+            tree.get(root).layout,
+            Rect {
+                x: 15,
+                y: 1,
+                width: 4,
+                height: 1
+            }
+        );
+    }
+
+    #[test]
+    fn overlay_layer_top_right_anchor_with_auto_width_sized_to_content() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::view(
+                ViewProps {
+                    overlay: Some(crate::props::Anchor::TopRight),
+                    // width left at Auto, like `widgets::Tooltip` actually does.
+                    ..Default::default()
+                },
+                vec![text("hint")],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        let r = tree.get(root).layout;
+        eprintln!("auto-width top-right overlay resolved to {r:?}");
+        assert_eq!(r.width, 4, "should shrink to the 4-char content");
+        assert_eq!(r.x, 15, "20 - 4 - EDGE_MARGIN(1) = 15");
+    }
+
+    #[test]
+    fn two_overlay_siblings_are_each_positioned_independently() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::fragment(vec![
+                Element::view(
+                    ViewProps {
+                        overlay: Some(crate::props::Anchor::TopRight),
+                        ..Default::default()
+                    },
+                    vec![text("hint")],
+                ),
+                Element::view(
+                    ViewProps {
+                        overlay: Some(crate::props::Anchor::BottomRight),
+                        ..Default::default()
+                    },
+                    vec![text("toast")],
+                ),
+            ]),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        let kids = tree.get(root).children.clone();
+        let r0 = tree.get(kids[0]).layout;
+        let r1 = tree.get(kids[1]).layout;
+        eprintln!("overlay 0 (TopRight, 'hint'): {r0:?}");
+        eprintln!("overlay 1 (BottomRight, 'toast'): {r1:?}");
+        assert_eq!(
+            r0,
+            Rect {
+                x: 15,
+                y: 1,
+                width: 4,
+                height: 1
+            }
+        );
+        assert_eq!(
+            r1,
+            Rect {
+                x: 14,
+                y: 8,
+                width: 5,
+                height: 1
+            }
+        );
+    }
+
+    #[test]
+    fn overlay_descendants_are_positioned_relative_to_the_corrected_overlay_rect() {
+        // Regression test: `walk_abs` originally accumulated absolute
+        // positions using taffy's own (uncorrected) location for an
+        // `Position: Absolute` overlay node, then handed *that* down as the
+        // origin for its children — so a Text child several levels inside an
+        // overlay (like `widgets::Toast`'s message) landed near (0, 0)
+        // instead of near its overlay box, even though the overlay box
+        // itself reported the right rect.
+        use crate::props::Anchor;
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::fragment(vec![
+                text("background"),
+                Element::view(
+                    ViewProps {
+                        overlay: Some(Anchor::BottomRight),
+                        padding: 1,
+                        border_style: BorderStyle::Round,
+                        ..Default::default()
+                    },
+                    vec![text("toast")],
+                ),
+            ]),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        let kids = tree.get(root).children.clone();
+        let overlay_id = kids[1];
+        let overlay = tree.get(overlay_id).layout;
+        let text_id = tree.get(overlay_id).children[0];
+        let text_rect = tree.get(text_id).layout;
+
+        // Overlay box: "toast" (5 wide, 1 tall) + padding 1 + border 1 each
+        // side = 9x5, bottom-right anchored in a 20x10 viewport (EDGE_MARGIN 1).
+        assert_eq!(
+            overlay,
+            Rect {
+                x: 10,
+                y: 4,
+                width: 9,
+                height: 5
+            }
+        );
+        // The Text child sits one cell in from the overlay's own top-left
+        // (border + padding), i.e. relative to the *corrected* overlay
+        // position — not off near (0, 0).
+        assert_eq!(
+            text_rect,
+            Rect {
+                x: 12,
+                y: 6,
+                width: 5,
+                height: 1
+            }
+        );
+    }
+
+    #[test]
+    fn three_overlays_plus_text_position_correctly_through_a_component_wrapper() {
+        use crate::component::Component;
+        use crate::props::Anchor;
+
+        struct Wrapper;
+        #[derive(Clone, PartialEq, Default)]
+        struct WrapperProps;
+        impl Component for Wrapper {
+            type Props = WrapperProps;
+            fn render(_: &WrapperProps, _hooks: &mut crate::hooks::Hooks) -> Element {
+                Element::fragment(vec![
+                    text("background"),
+                    Element::view(
+                        ViewProps {
+                            overlay: Some(Anchor::TopRight),
+                            ..Default::default()
+                        },
+                        vec![text("hint")],
+                    ),
+                    Element::view(
+                        ViewProps {
+                            overlay: Some(Anchor::BottomRight),
+                            ..Default::default()
+                        },
+                        vec![text("toast")],
+                    ),
+                    Element::view(
+                        ViewProps {
+                            overlay: Some(Anchor::Center),
+                            width: Dimension::Cells(10),
+                            height: Dimension::Cells(3),
+                            ..Default::default()
+                        },
+                        vec![],
+                    ),
+                ])
+            }
+        }
+
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(Element::component::<Wrapper>(WrapperProps), &rt);
+        compute_layout(&mut tree, 20, 10);
+        // Walk down through the Component fiber to its Fragment child's kids.
+        let frag = tree.get(root).children[0];
+        let kids = tree.get(frag).children.clone();
+        assert_eq!(
+            tree.get(kids[1]).layout,
+            Rect {
+                x: 15,
+                y: 1,
+                width: 4,
+                height: 1
+            }
+        );
+        assert_eq!(
+            tree.get(kids[2]).layout,
+            Rect {
+                x: 14,
+                y: 8,
+                width: 5,
+                height: 1
+            }
+        );
+        // And each overlay's own Text child, not just the overlay box itself.
+        let hint_text = tree.get(kids[1]).children[0];
+        let toast_text = tree.get(kids[2]).children[0];
+        assert_eq!(
+            tree.get(hint_text).layout,
+            Rect {
+                x: 15,
+                y: 1,
+                width: 4,
+                height: 1
+            }
+        );
+        assert_eq!(
+            tree.get(toast_text).layout,
+            Rect {
+                x: 14,
+                y: 8,
+                width: 5,
+                height: 1
+            }
+        );
     }
 }

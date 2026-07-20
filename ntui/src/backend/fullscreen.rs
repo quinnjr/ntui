@@ -7,8 +7,8 @@ use crate::backend::ansi::to_ct;
 use crate::buffer::CellUpdate;
 
 /// Alternate-screen, raw-mode terminal backend.
-/// v1 emits one MoveTo+style+Print per changed cell; batching styled runs is a
-/// later optimization.
+/// `flush` coalesces consecutive same-row, same-style, contiguous changed
+/// cells into a single MoveTo+style+Print run.
 pub struct FullscreenBackend {
     out: BufWriter<Stdout>,
 }
@@ -46,8 +46,11 @@ impl Backend for FullscreenBackend {
             terminal::Clear(terminal::ClearType::All)
         )
         .inspect_err(|_| {
-            // Raw mode is already on; undo it so a failed enter never leaks a broken shell.
+            // Raw mode is already on and we may have partially entered the
+            // alternate screen / hidden the cursor; undo whatever happened so
+            // a failed enter never leaks a broken shell.
             let _ = terminal::disable_raw_mode();
+            let _ = execute!(self.out, terminal::LeaveAlternateScreen, cursor::Show);
         })
     }
 
@@ -57,17 +60,42 @@ impl Backend for FullscreenBackend {
     }
 
     fn flush(&mut self, updates: &[CellUpdate]) -> io::Result<()> {
-        for u in updates {
-            let attrs = crate::backend::ansi::ct_attrs(u.cell.attrs);
+        // `Buffer::diff` emits updates in row-major, left-to-right order, so
+        // consecutive entries that share a row, are contiguous in x, and have
+        // identical styling can be coalesced into a single styled run: one
+        // MoveTo + one style set + one multi-char Print.
+        let mut i = 0;
+        while i < updates.len() {
+            let start = &updates[i];
+            let mut run = String::new();
+            run.push(start.cell.ch);
+            let mut j = i + 1;
+            while j < updates.len() {
+                let prev = &updates[j - 1];
+                let cur = &updates[j];
+                let contiguous = cur.y == prev.y && cur.x == prev.x + 1;
+                let same_style = cur.cell.fg == start.cell.fg
+                    && cur.cell.bg == start.cell.bg
+                    && cur.cell.attrs == start.cell.attrs;
+                if !contiguous || !same_style {
+                    break;
+                }
+                run.push(cur.cell.ch);
+                j += 1;
+            }
+
+            let attrs = crate::backend::ansi::ct_attrs(start.cell.attrs);
             queue!(
                 self.out,
-                cursor::MoveTo(u.x, u.y),
+                cursor::MoveTo(start.x, start.y),
                 style::SetAttribute(style::Attribute::Reset),
                 style::SetAttributes(attrs),
-                style::SetForegroundColor(to_ct(u.cell.fg)),
-                style::SetBackgroundColor(to_ct(u.cell.bg)),
-                style::Print(u.cell.ch),
+                style::SetForegroundColor(to_ct(start.cell.fg)),
+                style::SetBackgroundColor(to_ct(start.cell.bg)),
+                style::Print(run),
             )?;
+
+            i = j;
         }
         self.out.flush()
     }

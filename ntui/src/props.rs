@@ -12,6 +12,30 @@ pub enum Dimension {
     Percent(f32),
 }
 
+/// Where an overlay `View` (see [`ViewProps::overlay`]) is placed against
+/// the viewport. Corner anchors sit one cell in from both edges.
+///
+/// Setting `overlay` paints a `View` outside its normal place in the tree,
+/// after everything else, positioned against the whole viewport instead of
+/// its parent's box. Doesn't reserve space in its parent's layout (it's
+/// taken out of flow entirely) and isn't clipped by any ancestor. Used by
+/// [`crate::widgets::Modal`]/[`crate::widgets::Toast`]/[`crate::widgets::Tooltip`];
+/// still just a `View` prop, not a new element kind.
+///
+/// Nesting an overlay `View` inside another overlay `View` isn't supported —
+/// the inner one is silently not painted. None of the built-in overlay
+/// widgets nest, so this only matters for custom overlay compositions.
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum Anchor {
+    #[default]
+    Center,
+    TopLeft,
+    TopRight,
+    BottomLeft,
+    BottomRight,
+}
+
 /// The axis a `View`'s children are laid out along.
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
@@ -58,6 +82,15 @@ pub enum Overflow {
     Scroll,
 }
 
+/// The axis a background or text gradient is interpolated across.
+#[non_exhaustive]
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
+pub enum GradientDirection {
+    #[default]
+    Horizontal,
+    Vertical,
+}
+
 /// Style and layout properties for a `View` box, passed to flexbox layout
 /// via `taffy` and then to painting.
 #[derive(Clone, PartialEq, Debug, Default)]
@@ -78,12 +111,17 @@ pub struct ViewProps {
     pub border_style: BorderStyle,
     pub border_color: Color,
     pub background: Color,
+    /// When set, overrides `background` with a fill that interpolates
+    /// between the two colors across the box, in `GradientDirection`.
+    pub background_gradient: Option<(Color, Color, GradientDirection)>,
     /// How children exceeding the box are handled (clip / scroll).
     pub overflow: Overflow,
     /// Scroll position for an [`Overflow::Scroll`] box. Obtain via
     /// [`use_scroll`](crate::Hooks::use_scroll); layout feeds content/viewport
     /// sizes back into it and paint applies its offset.
     pub scroll: Option<Scroll>,
+    /// See [`Anchor`]. `None` (the default) is normal, in-flow painting.
+    pub overlay: Option<Anchor>,
 }
 
 /// How text overflowing its box width is handled.
@@ -104,4 +142,7 @@ pub struct TextProps {
     pub color: Color,
     pub weight: Weight,
     pub wrap: TextWrap,
+    /// When set, overrides `color` with a fill interpolated between the two
+    /// colors across each line's characters, left to right.
+    pub color_gradient: Option<(Color, Color)>,
 }

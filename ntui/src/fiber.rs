@@ -51,6 +51,10 @@ pub(crate) struct FiberTree {
     pub root: Option<FiberId>,
     /// Set on any structural change or host-prop change; cleared by layout.
     pub layout_dirty: bool,
+    /// Count of currently-mounted `Provider` fibers, maintained by
+    /// `mount_element`/`unmount`. Lets `context_for` short-circuit the
+    /// ancestor walk when the tree has no providers at all.
+    provider_count: usize,
 }
 
 impl FiberTree {
@@ -60,6 +64,7 @@ impl FiberTree {
             next_id: 0,
             root: None,
             layout_dirty: false,
+            provider_count: 0,
         }
     }
 
@@ -120,6 +125,9 @@ impl FiberTree {
             Node::Component(c) => (FiberKind::Component(c), Vec::new()),
         };
         let is_component = matches!(kind, FiberKind::Component(_));
+        if matches!(kind, FiberKind::Provider { .. }) {
+            self.provider_count += 1;
+        }
         self.fibers.insert(
             id,
             Fiber {
@@ -159,6 +167,9 @@ impl FiberTree {
             .fibers
             .remove(&id)
             .unwrap_or_else(|| panic!("ntui: no fiber with id {id}"));
+        if matches!(fiber.kind, FiberKind::Provider { .. }) {
+            self.provider_count -= 1;
+        }
         for slot in fiber.hooks {
             slot.unmount();
         }
@@ -223,6 +234,9 @@ impl FiberTree {
     /// first entry per type (`or_insert`) means the nearest provider wins,
     /// in a single pass with no intermediate chain allocation.
     pub(crate) fn context_for(&self, id: FiberId) -> Rc<ContextMap> {
+        if self.provider_count == 0 {
+            return Rc::new(ContextMap::new());
+        }
         let mut map = ContextMap::new();
         let mut cur = self.get(id).parent;
         while let Some(p) = cur {

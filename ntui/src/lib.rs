@@ -61,6 +61,7 @@ pub mod style;
 pub(crate) mod test_util;
 pub mod testing;
 pub(crate) mod text;
+pub mod widgets;
 
 pub use backend::{Backend, FullscreenBackend, InlineBackend, TestBackend};
 pub use component::Component;
@@ -75,7 +76,8 @@ pub use hooks::scrollback::Scrollback;
 pub use hooks::state::State;
 pub use ntui_macros::{component, element};
 pub use props::{
-    AlignItems, Dimension, FlexDirection, JustifyContent, Overflow, TextProps, TextWrap, ViewProps,
+    AlignItems, Anchor, Dimension, FlexDirection, GradientDirection, JustifyContent, Overflow,
+    TextProps, TextWrap, ViewProps,
 };
 pub use runtime::{render, render_inline};
 pub use style::{Attrs, BorderStyle, Color, Weight};

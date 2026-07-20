@@ -8,6 +8,7 @@ pub mod scroll;
 pub mod scrollback;
 pub mod state;
 pub mod task;
+pub mod timer;
 
 pub(crate) enum HookSlot {
     State(Box<dyn std::any::Any>), // holds a State<T>

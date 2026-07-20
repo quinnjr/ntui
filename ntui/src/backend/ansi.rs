@@ -42,6 +42,11 @@ pub(crate) fn ct_attrs(a: Attrs) -> style::Attributes {
 }
 
 /// Write one styled cell at the current cursor position.
+///
+/// Only used directly by tests now — `write_row` coalesces same-styled runs
+/// itself rather than calling this per cell — but kept as a small documented
+/// building block for constructing single-cell expectations in tests.
+#[cfg(test)]
 pub(crate) fn write_cell(out: &mut impl Write, cell: &Cell) -> io::Result<()> {
     queue!(
         out,
@@ -55,14 +60,43 @@ pub(crate) fn write_cell(out: &mut impl Write, cell: &Cell) -> io::Result<()> {
 
 /// Write a row of cells at the current cursor position, trimming trailing
 /// blank cells and resetting style at the end. Used for scrollback / live rows.
+///
+/// Consecutive cells with identical `fg`/`bg`/`attrs` are coalesced into a
+/// single style-set + one multi-char `Print`, rather than one full
+/// reset+attrs+fg+bg+print sequence per cell.
 pub(crate) fn write_row(out: &mut impl Write, cells: &[Cell]) -> io::Result<()> {
     let end = cells
         .iter()
         .rposition(|c| *c != Cell::default())
         .map(|i| i + 1)
         .unwrap_or(0);
-    for cell in &cells[..end] {
-        write_cell(out, cell)?;
+    let cells = &cells[..end];
+
+    let mut i = 0;
+    while i < cells.len() {
+        let start = &cells[i];
+        let mut run = String::new();
+        run.push(start.ch);
+        let mut j = i + 1;
+        while j < cells.len()
+            && cells[j].fg == start.fg
+            && cells[j].bg == start.bg
+            && cells[j].attrs == start.attrs
+        {
+            run.push(cells[j].ch);
+            j += 1;
+        }
+
+        queue!(
+            out,
+            style::SetAttribute(style::Attribute::Reset),
+            style::SetAttributes(ct_attrs(start.attrs)),
+            style::SetForegroundColor(to_ct(start.fg)),
+            style::SetBackgroundColor(to_ct(start.bg)),
+            style::Print(run),
+        )?;
+
+        i = j;
     }
     queue!(out, style::SetAttribute(style::Attribute::Reset))
 }

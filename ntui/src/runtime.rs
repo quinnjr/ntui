@@ -35,8 +35,14 @@ pub(crate) struct AppCore {
     wake_rx: UnboundedReceiver<Wake>,
     pending: Vec<FiberId>,
     prev: Option<Buffer>,
+    /// Spare buffer for `draw`'s double-buffering (see `draw`'s doc comment).
+    scratch: Option<Buffer>,
     pub size: (u16, u16),
     pub exited: bool,
+    /// Last `(width, max_height)` passed to `live_rows`, used to gate its
+    /// `compute_layout` call the same way `draw` gates on `layout_dirty` /
+    /// `prev.is_none()`. `None` until the first `live_rows` call.
+    live_size: Option<(u16, u16)>,
 }
 
 impl AppCore {
@@ -56,8 +62,10 @@ impl AppCore {
             wake_rx,
             pending: Vec::new(),
             prev: None,
+            scratch: None,
             size,
             exited: false,
+            live_size: None,
         }
     }
 
@@ -140,10 +148,19 @@ impl AppCore {
         if self.tree.layout_dirty || self.prev.is_none() {
             compute_layout(&mut self.tree, self.size.0, self.size.1);
         }
-        let mut buf = Buffer::new(self.size.0, self.size.1);
+        // Double-buffer: paint into `self.scratch` (the buffer from two
+        // frames ago, if any) instead of allocating fresh every frame, diff
+        // against `self.prev` (last frame's buffer), then swap the two
+        // roles for next time. This avoids a Vec alloc+zero-fill per frame
+        // in the common case where the terminal size hasn't changed.
+        let mut buf = self
+            .scratch
+            .take()
+            .unwrap_or_else(|| Buffer::new(self.size.0, self.size.1));
+        buf.resize_and_clear(self.size.0, self.size.1);
         paint(&self.tree, &mut buf);
         let blank;
-        let prev = match &self.prev {
+        let prev: &Buffer = match &self.prev {
             Some(p) => p,
             None => {
                 blank = Buffer::new(self.size.0, self.size.1);
@@ -151,6 +168,7 @@ impl AppCore {
             }
         };
         backend.flush(&buf.diff(prev))?;
+        self.scratch = self.prev.take();
         self.prev = Some(buf);
         Ok(())
     }
@@ -158,7 +176,11 @@ impl AppCore {
     /// Inline mode: content-sized rows of the live region. Lays out at `width`
     /// (bounded to `max_height`), paints, and drops trailing blank rows.
     pub fn live_rows(&mut self, width: u16, max_height: u16) -> Vec<Vec<Cell>> {
-        compute_layout(&mut self.tree, width, max_height);
+        let size_changed = self.live_size != Some((width, max_height));
+        if self.tree.layout_dirty || size_changed {
+            compute_layout(&mut self.tree, width, max_height);
+            self.live_size = Some((width, max_height));
+        }
         let mut buf = Buffer::new(width, max_height);
         paint(&self.tree, &mut buf);
         trim_rows(buffer_rows(&buf))
