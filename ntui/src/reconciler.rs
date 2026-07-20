@@ -99,13 +99,14 @@ impl FiberTree {
         for id in old_indexed.into_iter().flatten() {
             self.unmount(id);
         }
-        self.get_mut(parent).children = next.clone();
         // A pure reorder of surviving children is structural even though no
         // individual fiber's props changed, so it isn't caught by the
         // `changed` guards in `update_fiber`. Mounts/unmounts already flag
         // layout via `mount_element`/`unmount`; only flag here when the
         // surviving children's order actually moved.
-        if next != old_order {
+        let reordered = next != old_order;
+        self.get_mut(parent).children = next;
+        if reordered {
             self.layout_dirty = true;
         }
     }

@@ -1,6 +1,6 @@
 use crate::buffer::{Buffer, Cell};
 use crate::fiber::{FiberId, FiberKind, FiberTree, Rect};
-use crate::props::{Overflow, TextWrap};
+use crate::props::{GradientDirection, Overflow, TextWrap};
 use crate::style::{Attrs, BorderStyle, Color, Weight};
 use crate::text::{truncate_line, wrap_text};
 
@@ -12,7 +12,22 @@ pub(crate) fn paint(tree: &FiberTree, buf: &mut Buffer) {
             width: buf.width(),
             height: buf.height(),
         };
-        paint_fiber(tree, root, buf, full, (0, 0));
+        let mut overlays = Vec::new();
+        paint_fiber(tree, root, buf, full, (0, 0), &mut overlays, false);
+        // Second pass: overlay views (`ViewProps::overlay`) paint last, over
+        // everything the first pass just painted, unclipped and at the
+        // root-anchored rect `compute_layout` gave them — regardless of
+        // where they sit in the tree. A throwaway `overlays` list below
+        // means an overlay nested inside another overlay is silently not
+        // painted; see `Anchor`.
+        for id in overlays {
+            let mut inner_overlays = Vec::new();
+            paint_fiber(tree, id, buf, full, (0, 0), &mut inner_overlays, true);
+            debug_assert!(
+                inner_overlays.is_empty(),
+                "overlay nested inside overlay (fiber {id:?}) is not supported and was not painted"
+            );
+        }
     }
 }
 
@@ -57,14 +72,46 @@ fn onscreen_rect(ox: i32, oy: i32, w: u16, h: u16) -> Rect {
     }
 }
 
-fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect, offset: (i32, i32)) {
+#[allow(clippy::too_many_arguments)]
+fn paint_fiber(
+    tree: &FiberTree,
+    id: FiberId,
+    buf: &mut Buffer,
+    clip: Rect,
+    offset: (i32, i32),
+    overlays: &mut Vec<FiberId>,
+    is_overlay_root: bool,
+) {
     let fiber = tree.get(id);
+    if !is_overlay_root
+        && let FiberKind::View(props) = &fiber.kind
+        && props.overlay.is_some()
+    {
+        overlays.push(id);
+        return;
+    }
     let r = fiber.layout;
     // This fiber's on-screen top-left, after ancestor scroll offsets.
     let (ox, oy) = (r.x as i32 + offset.0, r.y as i32 + offset.1);
     match &fiber.kind {
         FiberKind::View(props) => {
-            if props.background != Color::Reset {
+            if let Some((from, to, dir)) = props.background_gradient {
+                for dy in 0..r.height as i32 {
+                    for dx in 0..r.width as i32 {
+                        let t = gradient_t(dx, dy, r.width, r.height, dir);
+                        put(
+                            buf,
+                            clip,
+                            ox + dx,
+                            oy + dy,
+                            Cell {
+                                bg: Color::lerp(from, to, t),
+                                ..Cell::default()
+                            },
+                        );
+                    }
+                }
+            } else if props.background != Color::Reset {
                 for dy in 0..r.height as i32 {
                     for dx in 0..r.width as i32 {
                         put(
@@ -112,6 +159,10 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect, offs
                 ..Attrs::default()
             };
             for (dy, line) in lines.iter().take(r.height as usize).enumerate() {
+                let line_len = props
+                    .color_gradient
+                    .is_some()
+                    .then(|| line.chars().count().max(1));
                 for (dx, ch) in line.chars().take(r.width as usize).enumerate() {
                     // Sanitize application-supplied control characters (ESC, BEL,
                     // C0/C1, DEL) to prevent terminal escape-sequence injection.
@@ -127,18 +178,13 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect, offs
                     } else {
                         Color::Reset
                     };
-                    put(
-                        buf,
-                        clip,
-                        x,
-                        y,
-                        Cell {
-                            ch,
-                            fg: props.color,
-                            bg,
-                            attrs,
-                        },
-                    );
+                    let fg = if let Some((from, to)) = props.color_gradient {
+                        let t = dx as f32 / (line_len.unwrap().saturating_sub(1).max(1)) as f32;
+                        Color::lerp(from, to, t)
+                    } else {
+                        props.color
+                    };
+                    put(buf, clip, x, y, Cell { ch, fg, bg, attrs });
                 }
             }
         }
@@ -164,7 +210,16 @@ fn paint_fiber(tree: &FiberTree, id: FiberId, buf: &mut Buffer, clip: Rect, offs
         _ => (clip, offset),
     };
     for c in &fiber.children {
-        paint_fiber(tree, *c, buf, child_clip, child_offset);
+        paint_fiber(tree, *c, buf, child_clip, child_offset, overlays, false);
+    }
+}
+
+/// Interpolation factor `[0.0, 1.0]` for the cell at `(dx, dy)` within a
+/// `w`×`h` box, along the given gradient axis.
+fn gradient_t(dx: i32, dy: i32, w: u16, h: u16, dir: GradientDirection) -> f32 {
+    match dir {
+        GradientDirection::Horizontal => dx as f32 / (w.saturating_sub(1).max(1)) as f32,
+        GradientDirection::Vertical => dy as f32 / (h.saturating_sub(1).max(1)) as f32,
     }
 }
 
@@ -221,7 +276,8 @@ mod tests {
     use crate::hooks::RuntimeHandle;
     use crate::layout::compute_layout;
     use crate::props::{
-        Dimension, FlexDirection, JustifyContent, Overflow, TextProps, TextWrap, ViewProps,
+        Dimension, FlexDirection, GradientDirection, JustifyContent, Overflow, TextProps, TextWrap,
+        ViewProps,
     };
     use crate::style::{BorderStyle, Color, Weight};
 
@@ -287,6 +343,7 @@ mod tests {
                 color: Color::Yellow,
                 weight: Weight::Bold,
                 wrap: TextWrap::Truncate,
+                ..Default::default()
             }),
             &rt,
         );
@@ -492,6 +549,92 @@ mod tests {
     }
 
     #[test]
+    fn background_gradient_interpolates_across_the_box() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::view(
+                ViewProps {
+                    background_gradient: Some((
+                        Color::Rgb(0, 0, 0),
+                        Color::Rgb(255, 0, 0),
+                        GradientDirection::Horizontal,
+                    )),
+                    width: Dimension::Cells(3),
+                    height: Dimension::Cells(1),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 3, 1);
+        let mut buf = Buffer::new(3, 1);
+        paint(&tree, &mut buf);
+        assert_eq!(buf.get(0, 0).bg, Color::Rgb(0, 0, 0));
+        assert_eq!(buf.get(1, 0).bg, Color::Rgb(128, 0, 0));
+        assert_eq!(buf.get(2, 0).bg, Color::Rgb(255, 0, 0));
+    }
+
+    #[test]
+    fn background_gradient_interpolates_top_to_bottom_for_vertical() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::view(
+                ViewProps {
+                    background_gradient: Some((
+                        Color::Rgb(0, 0, 0),
+                        Color::Rgb(255, 255, 255),
+                        GradientDirection::Vertical,
+                    )),
+                    width: Dimension::Cells(3),
+                    height: Dimension::Cells(10),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 3, 10);
+        let mut buf = Buffer::new(3, 10);
+        paint(&tree, &mut buf);
+
+        // Top and bottom rows differ (interpolation runs vertically)...
+        assert_eq!(buf.get(0, 0).bg, Color::Rgb(0, 0, 0));
+        assert_eq!(buf.get(0, 9).bg, Color::Rgb(255, 255, 255));
+        assert_ne!(buf.get(0, 0).bg, buf.get(0, 9).bg);
+
+        // ...while columns within the same row all match (no horizontal drift).
+        for y in 0..10u16 {
+            let row_color = buf.get(0, y).bg;
+            assert_eq!(buf.get(1, y).bg, row_color, "row {y} col 1 mismatch");
+            assert_eq!(buf.get(2, y).bg, row_color, "row {y} col 2 mismatch");
+        }
+    }
+
+    #[test]
+    fn text_color_gradient_interpolates_across_the_line() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::text(TextProps {
+                content: "abc".into(),
+                color_gradient: Some((Color::Rgb(0, 0, 0), Color::Rgb(0, 0, 255))),
+                wrap: TextWrap::Truncate,
+                ..Default::default()
+            }),
+            &rt,
+        );
+        compute_layout(&mut tree, 3, 1);
+        let mut buf = Buffer::new(3, 1);
+        paint(&tree, &mut buf);
+        assert_eq!(buf.get(0, 0).fg, Color::Rgb(0, 0, 0));
+        assert_eq!(buf.get(1, 0).fg, Color::Rgb(0, 0, 128));
+        assert_eq!(buf.get(2, 0).fg, Color::Rgb(0, 0, 255));
+    }
+
+    #[test]
     fn double_border_no_root_and_text_past_buffer() {
         // Painting an empty tree is a no-op.
         let mut empty = Buffer::new(3, 1);
@@ -526,5 +669,58 @@ mod tests {
         let mut small = Buffer::new(2, 1);
         paint(&tree, &mut small);
         assert_eq!(small.get(0, 0).ch, 'a');
+    }
+
+    #[test]
+    fn overlay_layer_paints_after_a_later_sibling_that_would_otherwise_cover_it() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::fragment(vec![
+                // Comes first in tree order; a naive single-pass, depth-first
+                // paint would let the later Green sibling below overwrite it.
+                Element::view(
+                    ViewProps {
+                        width: Dimension::Cells(1),
+                        height: Dimension::Cells(1),
+                        ..Default::default()
+                    },
+                    vec![Element::view(
+                        ViewProps {
+                            overlay: Some(crate::props::Anchor::Center),
+                            width: Dimension::Cells(4),
+                            height: Dimension::Cells(4),
+                            background: Color::Red,
+                            ..Default::default()
+                        },
+                        vec![],
+                    )],
+                ),
+                // Comes after the overlay in tree order and covers the whole
+                // viewport.
+                Element::view(
+                    ViewProps {
+                        width: Dimension::Cells(10),
+                        height: Dimension::Cells(10),
+                        background: Color::Green,
+                        ..Default::default()
+                    },
+                    vec![],
+                ),
+            ]),
+            &rt,
+        );
+        compute_layout(&mut tree, 10, 10);
+        let mut buf = Buffer::new(10, 10);
+        paint(&tree, &mut buf);
+        // 4x4 centered in a 10x10 viewport sits at (3,3)..(7,7). The first
+        // (1x1) child sits at (0,0) in the row layout, so check a cell that's
+        // unambiguously part of the Green sibling instead.
+        assert_eq!(buf.get(4, 4).bg, Color::Red, "overlay should paint on top");
+        assert_eq!(
+            buf.get(9, 9).bg,
+            Color::Green,
+            "outside it, the later sibling still shows"
+        );
     }
 }

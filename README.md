@@ -19,10 +19,17 @@ terminal.
 
 ## Features
 
-- **Components + hooks**, not a widget library — `#[component]` functions and
-  `use_state` / `use_effect` / `use_input` / `use_future` / `use_stream` /
-  `use_context` / `use_terminal_size` / `use_scroll` / `use_scrollback` /
-  `use_app`, mirroring React's hook rules (identity by call order).
+- **Components + hooks first** — `#[component]` functions and
+  `use_state` / `use_effect` / `use_input` / `use_future` / `use_task` /
+  `use_stream` / `use_interval` / `use_tween` / `use_context` /
+  `use_terminal_size` / `use_scroll` / `use_scrollback` / `use_app`,
+  mirroring React's hook rules (identity by call order).
+- **A first-party widget layer** (`ntui::widgets`) built entirely from the
+  core primitives — `Button`, `Checkbox`/`Toggle`, `Select`, `Table`, `Tabs`,
+  `TextInput`, `Modal`, `Toast`, `Tooltip`, `Spinner`, `ProgressBar`,
+  `Badge`, `Divider`, `GradientText`, `Banner` — with theming (`use_theme`)
+  and Tab-cycling focus management (`use_focus_scope` / `use_focusable`).
+  Optional: your own components use the exact same five element kinds.
 - **`element!`**, a JSX-like macro for building `View`/`Text` trees with typed
   props, keyed children, and `#(...)` for iterators/fragments.
 - **A real reconciler**, not a diff-and-repaint-everything loop: a retained
@@ -46,7 +53,7 @@ terminal.
 
 ```toml
 [dependencies]
-ntui = "0.1"
+ntui = "0.2"
 ```
 
 Requires Rust 2024 edition (a recent stable toolchain).
@@ -101,6 +108,9 @@ more examples in the same directory:
 - [`inline_chat.rs`](ntui/examples/inline_chat.rs) — an **inline** chat that
   commits finished turns into the terminal's real scrollback (`render_inline` +
   `use_scrollback`) while a live region streams the reply at the bottom.
+- [`widgets_gallery.rs`](ntui/examples/widgets_gallery.rs) — every
+  `ntui::widgets` component on one screen, under a shared theme and focus
+  scope: Tab between them, open/close the modal, watch the gradients animate.
 
 ## Hooks (v1)
 
@@ -110,7 +120,10 @@ more examples in the same directory:
 | `use_effect` | Run on mount/deps-change; cleanup on unmount/deps-change |
 | `use_input` | Receive crossterm `KeyEvent`s routed to this component |
 | `use_future` / `use_stream` | Spawn tokio work owned by the component; aborted on unmount |
+| `use_task` | Deps-keyed `use_future`: re-spawns (aborting the old task) when deps change |
+| `use_interval` / `use_tween` | Periodic ticks; eased animation toward a moving target |
 | `use_context` / `ContextProvider` | Value injection down the tree |
+| `use_theme` / `use_focus_scope` / `use_focusable` | Widget-layer theming and Tab-cycling focus |
 | `use_terminal_size` | Reactive terminal dimensions |
 | `use_scroll` | Scroll position for an `Overflow::Scroll` view; auto-follows the bottom |
 | `use_scrollback` | Commit finished output into the terminal's real scrollback (inline mode) |

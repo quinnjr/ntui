@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ntui is an Ink-style TUI library for Rust: components as functions + hooks, an `element!` JSX-like macro, a React-style keyed reconciler over a retained fiber tree, taffy flexbox layout, cell-diff painting, and a fullscreen crossterm backend on a tokio event loop. Workspace: `ntui` (the library) and `ntui-macros` (proc macros `element!` and `#[component]`).
 
-Design spec: `docs/superpowers/specs/2026-07-02-ntui-design.md`. Inline/scrollback rendering was originally out-of-scope there but has since shipped (`render_inline`, `backend/inline.rs`, `use_scrollback`); the spec's remaining out-of-scope list (widget library, mouse) still stands — don't add those without being asked.
+Design spec: `docs/superpowers/specs/2026-07-02-ntui-design.md`. Two things originally out-of-scope there have since shipped: inline/scrollback rendering (`render_inline`, `backend/inline.rs`, `use_scrollback`) and a first-party widget layer (`ntui/src/widgets/`, built entirely from the five element kinds — no new node kind). The spec's remaining out-of-scope item (mouse) still stands — don't add it without being asked.
 
 ## Commands
 

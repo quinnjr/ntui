@@ -175,4 +175,60 @@ mod tests {
         tree.unmount(root);
         assert_eq!(*props.log.lock(), vec!["cleanA", "cleanB"]);
     }
+
+    struct Child;
+    #[derive(Clone, PartialEq, Default)]
+    struct ChildProps {
+        log: Shared<Vec<String>>,
+    }
+    impl Component for Child {
+        type Props = ChildProps;
+        fn render(props: &ChildProps, hooks: &mut Hooks) -> Element {
+            let log = props.log.clone();
+            hooks.use_effect((), move || {
+                log.lock().push("child".into());
+            });
+            Element::text(TextProps::default())
+        }
+    }
+
+    struct Parent;
+    #[derive(Clone, PartialEq, Default)]
+    struct ParentProps {
+        log: Shared<Vec<String>>,
+    }
+    impl Component for Parent {
+        type Props = ParentProps;
+        fn render(props: &ParentProps, hooks: &mut Hooks) -> Element {
+            let log = props.log.clone();
+            hooks.use_effect((), move || {
+                log.lock().push("parent".into());
+            });
+            Element::view(
+                crate::props::ViewProps::default(),
+                vec![Element::component::<Child>(ChildProps {
+                    log: props.log.clone(),
+                })],
+            )
+        }
+    }
+
+    /// Pins `flush_effects`'s documented "parents before children" ordering
+    /// guarantee across *different* fibers (not just multiple effects on the
+    /// same fiber, which the tests above already cover). A depth-only sort
+    /// (rather than the DFS-order walk `flush_effects` actually uses) would
+    /// satisfy this alone but silently scramble same-depth sibling order —
+    /// see the reverted attempt in this task's history.
+    #[test]
+    fn parent_effect_runs_before_child_effect_across_fibers() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let log = Shared::default();
+        let props = ParentProps { log };
+        tree.mount_root(Element::component::<Parent>(props.clone()), &rt);
+
+        tree.flush_effects();
+        assert_eq!(*props.log.lock(), vec!["parent", "child"]);
+    }
 }

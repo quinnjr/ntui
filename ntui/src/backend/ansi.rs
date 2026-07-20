@@ -42,6 +42,11 @@ pub(crate) fn ct_attrs(a: Attrs) -> style::Attributes {
 }
 
 /// Write one styled cell at the current cursor position.
+///
+/// Only used directly by tests now — `write_row` coalesces same-styled runs
+/// itself rather than calling this per cell — but kept as a small documented
+/// building block for constructing single-cell expectations in tests.
+#[cfg(test)]
 pub(crate) fn write_cell(out: &mut impl Write, cell: &Cell) -> io::Result<()> {
     queue!(
         out,
@@ -55,14 +60,43 @@ pub(crate) fn write_cell(out: &mut impl Write, cell: &Cell) -> io::Result<()> {
 
 /// Write a row of cells at the current cursor position, trimming trailing
 /// blank cells and resetting style at the end. Used for scrollback / live rows.
+///
+/// Consecutive cells with identical `fg`/`bg`/`attrs` are coalesced into a
+/// single style-set + one multi-char `Print`, rather than one full
+/// reset+attrs+fg+bg+print sequence per cell.
 pub(crate) fn write_row(out: &mut impl Write, cells: &[Cell]) -> io::Result<()> {
     let end = cells
         .iter()
         .rposition(|c| *c != Cell::default())
         .map(|i| i + 1)
         .unwrap_or(0);
-    for cell in &cells[..end] {
-        write_cell(out, cell)?;
+    let cells = &cells[..end];
+
+    let mut i = 0;
+    while i < cells.len() {
+        let start = &cells[i];
+        let mut run = String::new();
+        run.push(start.ch);
+        let mut j = i + 1;
+        while j < cells.len()
+            && cells[j].fg == start.fg
+            && cells[j].bg == start.bg
+            && cells[j].attrs == start.attrs
+        {
+            run.push(cells[j].ch);
+            j += 1;
+        }
+
+        queue!(
+            out,
+            style::SetAttribute(style::Attribute::Reset),
+            style::SetAttributes(ct_attrs(start.attrs)),
+            style::SetForegroundColor(to_ct(start.fg)),
+            style::SetBackgroundColor(to_ct(start.bg)),
+            style::Print(run),
+        )?;
+
+        i = j;
     }
     queue!(out, style::SetAttribute(style::Attribute::Reset))
 }
@@ -117,6 +151,35 @@ mod tests {
         write_row(&mut out, &[Cell::default(), Cell::default()]).unwrap();
         // Trimmed to zero cells; still succeeds (emits a trailing style reset).
         assert!(!String::from_utf8(out).unwrap().contains('x'));
+    }
+
+    #[test]
+    fn write_row_breaks_the_run_on_a_style_change() {
+        let mut out = Vec::new();
+        let cells = [
+            Cell {
+                ch: 'h',
+                fg: Color::Red,
+                ..Cell::default()
+            },
+            Cell {
+                ch: 'i',
+                fg: Color::Blue,
+                ..Cell::default()
+            },
+        ];
+        write_row(&mut out, &cells).unwrap();
+        let s = String::from_utf8(out).unwrap();
+
+        assert!(s.contains('h') && s.contains('i'));
+        // A single coalesced run would print "hi" together under one style;
+        // a style change must break it into two separate Print payloads.
+        assert!(!s.contains("hi"));
+        // Two distinct SetForegroundColor sequences (red, then blue), not one.
+        let red = format!("{}", style::SetForegroundColor(to_ct(Color::Red)));
+        let blue = format!("{}", style::SetForegroundColor(to_ct(Color::Blue)));
+        assert_eq!(s.matches(&red).count(), 1);
+        assert_eq!(s.matches(&blue).count(), 1);
     }
 
     #[test]

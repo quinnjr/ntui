@@ -66,10 +66,29 @@ impl Buffer {
         }
     }
 
+    /// Resizes to `width`x`height` and resets every cell to `Cell::default()`,
+    /// reusing the existing `Vec` allocation when the dimensions are unchanged
+    /// instead of reallocating (as a fresh `Buffer::new` would).
+    pub fn resize_and_clear(&mut self, width: u16, height: u16) {
+        let len = width as usize * height as usize;
+        if self.width == width && self.height == height {
+            self.cells.iter_mut().for_each(|c| *c = Cell::default());
+        } else {
+            self.width = width;
+            self.height = height;
+            self.cells.clear();
+            self.cells.resize(len, Cell::default());
+        }
+    }
+
     /// Cells that differ from `prev`. If dimensions differ, every cell.
     pub fn diff(&self, prev: &Buffer) -> Vec<CellUpdate> {
-        let mut out = Vec::new();
         let full = self.width != prev.width || self.height != prev.height;
+        let mut out = Vec::with_capacity(if full {
+            self.width as usize * self.height as usize
+        } else {
+            0
+        });
         for y in 0..self.height {
             for x in 0..self.width {
                 let cell = self.get(x, y);
@@ -154,6 +173,59 @@ mod tests {
         let prev = Buffer::new(2, 1);
         let next = Buffer::new(3, 1);
         assert_eq!(next.diff(&prev).len(), 3);
+    }
+
+    #[test]
+    fn resize_and_clear_reuses_allocation_when_size_unchanged() {
+        let mut b = Buffer::new(3, 2);
+        b.set(
+            1,
+            1,
+            Cell {
+                ch: 'x',
+                fg: Color::Red,
+                ..Cell::default()
+            },
+        );
+        b.resize_and_clear(3, 2);
+        assert_eq!(b.width(), 3);
+        assert_eq!(b.height(), 2);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
+    }
+
+    #[test]
+    fn resize_and_clear_grows_and_shrinks() {
+        let mut b = Buffer::new(3, 3);
+        b.set(
+            0,
+            0,
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            },
+        );
+
+        b.resize_and_clear(5, 2);
+        assert_eq!(b.width(), 5);
+        assert_eq!(b.height(), 2);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
+
+        b.resize_and_clear(1, 1);
+        assert_eq!(b.width(), 1);
+        assert_eq!(b.height(), 1);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
     }
 
     #[test]

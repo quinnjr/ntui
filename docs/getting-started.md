@@ -4,7 +4,7 @@
 
 ```toml
 [dependencies]
-ntui = "0.1"
+ntui = "0.2"
 tokio = { version = "1", features = ["rt", "macros"] }
 ```
 

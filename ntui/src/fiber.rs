@@ -51,6 +51,10 @@ pub(crate) struct FiberTree {
     pub root: Option<FiberId>,
     /// Set on any structural change or host-prop change; cleared by layout.
     pub layout_dirty: bool,
+    /// Count of currently-mounted `Provider` fibers, maintained by
+    /// `mount_element`/`unmount`. Lets `context_for` short-circuit the
+    /// ancestor walk when the tree has no providers at all.
+    provider_count: usize,
 }
 
 impl FiberTree {
@@ -60,6 +64,7 @@ impl FiberTree {
             next_id: 0,
             root: None,
             layout_dirty: false,
+            provider_count: 0,
         }
     }
 
@@ -120,6 +125,9 @@ impl FiberTree {
             Node::Component(c) => (FiberKind::Component(c), Vec::new()),
         };
         let is_component = matches!(kind, FiberKind::Component(_));
+        if matches!(kind, FiberKind::Provider { .. }) {
+            self.provider_count += 1;
+        }
         self.fibers.insert(
             id,
             Fiber {
@@ -159,6 +167,9 @@ impl FiberTree {
             .fibers
             .remove(&id)
             .unwrap_or_else(|| panic!("ntui: no fiber with id {id}"));
+        if matches!(fiber.kind, FiberKind::Provider { .. }) {
+            self.provider_count -= 1;
+        }
         for slot in fiber.hooks {
             slot.unmount();
         }
@@ -172,6 +183,15 @@ impl FiberTree {
         let mut order = Vec::new();
         self.collect_dfs(root, &mut order);
         for id in order {
+            // Cheap read-only pre-scan: most fibers most frames have nothing
+            // pending, and skipping them avoids the mem::take/restore churn
+            // below while keeping exact DFS document order for the rest.
+            let has_pending = self.get(id).hooks.iter().any(
+                |slot| matches!(slot, crate::hooks::HookSlot::Effect(e) if e.pending.is_some()),
+            );
+            if !has_pending {
+                continue;
+            }
             // If user code panics mid-processing, this fiber's taken hook slots are dropped
             // un-restored; acceptable because a panic tears down the whole app (see RestoreGuard
             // in runtime.rs).
@@ -223,6 +243,9 @@ impl FiberTree {
     /// first entry per type (`or_insert`) means the nearest provider wins,
     /// in a single pass with no intermediate chain allocation.
     pub(crate) fn context_for(&self, id: FiberId) -> Rc<ContextMap> {
+        if self.provider_count == 0 {
+            return Rc::new(ContextMap::new());
+        }
         let mut map = ContextMap::new();
         let mut cur = self.get(id).parent;
         while let Some(p) = cur {
@@ -240,8 +263,10 @@ mod tests {
     use super::*;
     use crate::component::Component;
     use crate::element::Element;
+    use crate::hooks::state::State;
     use crate::hooks::{Hooks, RuntimeHandle};
     use crate::props::{TextProps, ViewProps};
+    use crate::test_util::Shared;
 
     struct App;
     #[derive(Clone, PartialEq, Default)]
@@ -309,5 +334,71 @@ mod tests {
     fn get_mut_missing_fiber_panics() {
         let mut tree = FiberTree::new();
         let _ = tree.get_mut(999);
+    }
+
+    struct Consumer;
+    #[derive(Clone, PartialEq, Default)]
+    struct ConsumerProps {
+        value_out: Shared<Option<u32>>,
+    }
+    impl Component for Consumer {
+        type Props = ConsumerProps;
+        fn render(props: &ConsumerProps, hooks: &mut Hooks) -> Element {
+            let value = hooks.use_context::<u32>();
+            *props.value_out.lock() = value.map(|v| *v);
+            Element::text(TextProps {
+                content: "consumer".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct NestedProviderHost;
+    #[derive(Clone, PartialEq, Default)]
+    struct NestedProviderHostProps {
+        show_inner_out: Shared<Option<State<bool>>>,
+        consumer_value_out: Shared<Option<u32>>,
+    }
+    impl Component for NestedProviderHost {
+        type Props = NestedProviderHostProps;
+        fn render(props: &NestedProviderHostProps, hooks: &mut Hooks) -> Element {
+            let show_inner = hooks.use_state(|| true);
+            *props.show_inner_out.lock() = Some(show_inner.clone());
+            let consumer = Element::component::<Consumer>(ConsumerProps {
+                value_out: props.consumer_value_out.clone(),
+            });
+            let inner = if show_inner.get() {
+                Element::provider(2u32, vec![consumer])
+            } else {
+                consumer
+            };
+            Element::provider(1u32, vec![inner])
+        }
+    }
+
+    /// Pins `provider_count`'s mount/unmount bookkeeping: two nested `Provider`
+    /// fibers of the same `TypeId` mount to a count of 2 with the consumer
+    /// seeing the nearest (inner) value; unmounting just the inner provider
+    /// (via re-render, not a direct `unmount` call) must decrement the count
+    /// to exactly 1 and flip the consumer over to the outer provider's value,
+    /// proving `context_for`'s short-circuit stays accurate as providers
+    /// actually leave the tree.
+    #[test]
+    fn provider_count_tracks_mount_and_unmount() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        std::mem::forget(_rx);
+        let mut tree = FiberTree::new();
+        let props = NestedProviderHostProps::default();
+        let root = tree.mount_root(Element::component::<NestedProviderHost>(props.clone()), &rt);
+
+        assert_eq!(tree.provider_count, 2);
+        assert_eq!(*props.consumer_value_out.lock(), Some(2));
+
+        let show_inner = props.show_inner_out.lock().clone().unwrap();
+        show_inner.set(false);
+        tree.render_fiber(root, &rt);
+
+        assert_eq!(tree.provider_count, 1);
+        assert_eq!(*props.consumer_value_out.lock(), Some(1));
     }
 }

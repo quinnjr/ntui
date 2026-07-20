@@ -6,6 +6,8 @@ as needed:
 - [`getting-started.md`](getting-started.md) — install, build your first
   component, understand the render loop at a glance.
 - [`hooks.md`](hooks.md) — every hook, its signature, and when to reach for it.
+- [`widgets.md`](widgets.md) — the first-party `ntui::widgets` layer: themed,
+  focusable components built from the five primitives.
 - [`architecture.md`](architecture.md) — the fiber tree, reconciler, layout,
   paint, and the two rendering backends (fullscreen vs. inline).
 - [`superpowers/specs/2026-07-02-ntui-design.md`](superpowers/specs/2026-07-02-ntui-design.md) —

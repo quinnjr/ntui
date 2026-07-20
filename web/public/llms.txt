@@ -7,22 +7,27 @@
 
 ntui lets Rust developers build terminal UIs the way Ink lets JavaScript
 developers build them: `#[component]` functions call hooks (`use_state`,
-`use_effect`, `use_input`, `use_future`, `use_stream`, `use_context`,
-`use_terminal_size`, `use_scroll`, `use_scrollback`, `use_app`) and return an
-`element!` tree of `View`/`Text` nodes. State changes trigger re-renders; the
-engine reconciles the tree, computes flexbox layout, paints to an in-memory
-cell buffer, diffs against the previous frame, and writes only the changed
-cells to the terminal.
+`use_effect`, `use_input`, `use_future`, `use_task`, `use_stream`,
+`use_interval`, `use_tween`, `use_context`, `use_terminal_size`,
+`use_scroll`, `use_scrollback`, `use_app`) and return an `element!` tree of
+`View`/`Text` nodes. State changes trigger re-renders; the engine reconciles
+the tree, computes flexbox layout, paints to an in-memory cell buffer, diffs
+against the previous frame, and writes only the changed cells to the
+terminal. A first-party `ntui::widgets` module (Button, Checkbox, Select,
+Table, Tabs, TextInput, Modal, Toast, Tooltip, Spinner, ProgressBar, Badge,
+Divider, GradientText, Banner) ships on top, with theming (`use_theme`) and
+Tab-cycling focus management (`use_focus_scope` / `use_focusable`).
 
 - License: MIT OR Apache-2.0 (dual-licensed, user's choice)
 - Language: Rust, 2024 edition
-- Install: `ntui = "0.1"` in Cargo.toml
+- Install: `ntui = "0.2"` in Cargo.toml
 - Repository: https://github.com/quinnjr/ntui
 
 ## Docs
 
 - [Getting Started](https://quinnjr.github.io/ntui/docs/getting-started): install, first component, the render loop, testing without a TTY.
 - [Hooks Reference](https://quinnjr.github.io/ntui/docs/hooks): every hook's signature and when to use it.
+- [Widgets](https://quinnjr.github.io/ntui/docs/widgets): the first-party ntui::widgets layer — catalog, theming, and the focus-scope composition pattern.
 - [Architecture](https://quinnjr.github.io/ntui/docs/architecture): the fiber tree, reconciler, layout, paint pipeline, and the fullscreen vs. inline rendering backends.
 
 ## Notes for automated agents
@@ -32,6 +37,9 @@ cells to the terminal.
   characters can misalign), and `use_context` consumers that skip
   re-rendering may observe a stale context value until something else marks
   them dirty.
-- Not a widget library: ntui does not ship pre-built widgets (lists, tables,
-  progress bars); the flexbox `View`/`Text` primitives plus hooks are the
-  whole surface.
+- The `ntui::widgets` module is an optional layer built entirely from the
+  five core element kinds (View/Text/Fragment/Provider/Component) — custom
+  components have access to everything the first-party widgets use,
+  including overlay positioning (`ViewProps::overlay`) and the theme/focus
+  hooks. Nesting one overlay view inside another is unsupported (the inner
+  one is not painted; debug builds assert).

@@ -6,15 +6,14 @@ import { withBase } from '../../lib/url';
 
 export async function getStaticPaths() {
   const entries = await getCollection('docs');
-  return DOCS_NAV.filter((item) => entries.some((e) => e.id === item.slug)).map((item) => ({
-    params: { slug: item.slug },
-    props: { nav: item },
-  }));
+  const bySlug = new Map(entries.map((e) => [e.id, e]));
+  return DOCS_NAV.flatMap((item) => {
+    const entry = bySlug.get(item.slug);
+    return entry ? [{ params: { slug: item.slug }, props: { nav: item, entry } }] : [];
+  });
 }
 
-const { nav } = Astro.props;
-const entries = await getCollection('docs');
-const entry = entries.find((e) => e.id === nav.slug)!;
+const { nav, entry } = Astro.props;
 const { Content } = await render(entry);
 
 const canonicalPath = withBase(`docs/${nav.slug}`);

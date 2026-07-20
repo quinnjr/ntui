@@ -35,8 +35,22 @@ pub(crate) struct AppCore {
     wake_rx: UnboundedReceiver<Wake>,
     pending: Vec<FiberId>,
     prev: Option<Buffer>,
+    /// Spare buffer for `draw`'s double-buffering (see `draw`'s doc comment).
+    scratch: Option<Buffer>,
+    /// Set by `resize`; makes the next `draw` rewrite every cell (blanks
+    /// included) instead of diffing, since the terminal's contents after a
+    /// resize no longer match `prev`.
+    force_full: bool,
     pub size: (u16, u16),
     pub exited: bool,
+    /// Last `(width, max_height)` passed to `live_rows`, used to gate its
+    /// `compute_layout` call the same way `draw` gates on `layout_dirty` /
+    /// `prev.is_none()`. `None` until the first `live_rows` call.
+    live_size: Option<(u16, u16)>,
+    /// Spare buffer for `live_rows`'s double-buffering, mirroring `scratch`
+    /// (see `draw`'s doc comment) so inline mode doesn't allocate a fresh
+    /// `Buffer` every frame either.
+    live_scratch: Option<Buffer>,
 }
 
 impl AppCore {
@@ -56,8 +70,12 @@ impl AppCore {
             wake_rx,
             pending: Vec::new(),
             prev: None,
+            scratch: None,
+            force_full: false,
             size,
             exited: false,
+            live_size: None,
+            live_scratch: None,
         }
     }
 
@@ -140,17 +158,37 @@ impl AppCore {
         if self.tree.layout_dirty || self.prev.is_none() {
             compute_layout(&mut self.tree, self.size.0, self.size.1);
         }
-        let mut buf = Buffer::new(self.size.0, self.size.1);
+        // Double-buffer: paint into `self.scratch` (the buffer from two
+        // frames ago, if any) instead of allocating fresh every frame, diff
+        // against `self.prev` (last frame's buffer), then swap the two
+        // roles for next time. This avoids a Vec alloc+zero-fill per frame
+        // in the common case where the terminal size hasn't changed.
+        let mut buf = self
+            .scratch
+            .take()
+            .unwrap_or_else(|| Buffer::new(self.size.0, self.size.1));
+        buf.resize_and_clear(self.size.0, self.size.1);
         paint(&self.tree, &mut buf);
-        let blank;
-        let prev = match &self.prev {
-            Some(p) => p,
-            None => {
-                blank = Buffer::new(self.size.0, self.size.1);
-                &blank
-            }
+        let baseline;
+        let prev: &Buffer = if self.force_full {
+            // After a resize the terminal still shows the old frame in
+            // whatever cells the new frame doesn't overwrite — so diff
+            // against a size-mismatched baseline, which makes `Buffer::diff`
+            // emit every cell (blanks included), not just the non-blank ones
+            // a blank baseline would produce.
+            baseline = Buffer::new(0, 0);
+            &baseline
+        } else if let Some(p) = &self.prev {
+            p
+        } else {
+            // First frame: enter() left the screen cleared, so a blank
+            // baseline at the current size skips writing the blank cells.
+            baseline = Buffer::new(self.size.0, self.size.1);
+            &baseline
         };
         backend.flush(&buf.diff(prev))?;
+        self.force_full = false;
+        self.scratch = self.prev.take();
         self.prev = Some(buf);
         Ok(())
     }
@@ -158,10 +196,20 @@ impl AppCore {
     /// Inline mode: content-sized rows of the live region. Lays out at `width`
     /// (bounded to `max_height`), paints, and drops trailing blank rows.
     pub fn live_rows(&mut self, width: u16, max_height: u16) -> Vec<Vec<Cell>> {
-        compute_layout(&mut self.tree, width, max_height);
-        let mut buf = Buffer::new(width, max_height);
+        let size_changed = self.live_size != Some((width, max_height));
+        if self.tree.layout_dirty || size_changed {
+            compute_layout(&mut self.tree, width, max_height);
+            self.live_size = Some((width, max_height));
+        }
+        let mut buf = self
+            .live_scratch
+            .take()
+            .unwrap_or_else(|| Buffer::new(width, max_height));
+        buf.resize_and_clear(width, max_height);
         paint(&self.tree, &mut buf);
-        trim_rows(buffer_rows(&buf))
+        let rows = trim_rows(buffer_rows(&buf));
+        self.live_scratch = Some(buf);
+        rows
     }
 
     /// Inline mode: drain queued scrollback elements, rendering each to rows to
@@ -194,7 +242,12 @@ impl AppCore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = (w, h);
         self.tree.layout_dirty = true;
-        self.prev = None; // full repaint
+        // Force a true full repaint on the next draw: the terminal still
+        // shows the old frame, so every cell — including ones blank in the
+        // new frame — must be rewritten. (Setting `prev = None` instead
+        // would diff against an assumed-blank screen and skip blank cells,
+        // leaving stale content wherever the new frame has none.)
+        self.force_full = true;
         // Push the root as dirty so components reading use_terminal_size()
         // re-render with the new size. The caller must invoke
         // process_wakes() after resize() to actually apply this;
@@ -430,7 +483,7 @@ mod tests {
     use crate::backend::inline::{InlineSink, RecordingSink};
     use crate::component::Component;
     use crate::hooks::Hooks;
-    use crate::props::{TextProps, ViewProps};
+    use crate::props::{Dimension, FlexDirection, TextProps, ViewProps};
 
     #[test]
     fn restore_guard_leaves_on_drop() {
@@ -569,6 +622,143 @@ mod tests {
         sink.commit(&committed).unwrap();
         let live = core.live_rows(w, h);
         sink.present(&live).unwrap();
+    }
+
+    struct SizeLabel;
+    impl Component for SizeLabel {
+        type Props = ();
+        fn render(_: &(), hooks: &mut Hooks) -> Element {
+            let (w, h) = hooks.use_terminal_size();
+            Element::text(TextProps {
+                content: format!("{w}x{h}"),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn draw_double_buffer_reflects_new_dimensions_after_resize() {
+        // Backend sized to the larger of the two dimensions we'll draw at,
+        // so both frames' updates land fully inside its buffer.
+        let mut core = AppCore::new(Element::component::<SizeLabel>(()), (6, 2));
+        core.process_wakes();
+        let mut be = TestBackend::new(10, 3);
+
+        core.draw(&mut be).unwrap();
+        let row0 = be.to_text().lines().next().unwrap().to_string();
+        assert!(
+            row0.starts_with("6x2"),
+            "expected first frame to show 6x2, got {row0:?}"
+        );
+        assert_eq!(
+            core.prev.as_ref().map(|b| (b.width(), b.height())),
+            Some((6, 2))
+        );
+
+        core.resize(10, 3);
+        core.process_wakes();
+        // resize() sets force_full, so this draw is a true full repaint at
+        // the new size — it must overwrite every cell of the backend's
+        // buffer, including the leftover content from the (6, 2) frame above.
+        core.draw(&mut be).unwrap();
+        let row0 = be.to_text().lines().next().unwrap().to_string();
+        assert!(
+            row0.starts_with("10x3"),
+            "expected second frame to show 10x3, got {row0:?}"
+        );
+        assert_eq!(
+            core.prev.as_ref().map(|b| (b.width(), b.height())),
+            Some((10, 3))
+        );
+    }
+
+    struct Label;
+    #[derive(Clone, PartialEq, Default)]
+    struct LabelProps {
+        text: crate::test_util::Shared<Option<crate::hooks::state::State<String>>>,
+    }
+    impl Component for Label {
+        type Props = LabelProps;
+        fn render(props: &LabelProps, hooks: &mut Hooks) -> Element {
+            let s = hooks.use_state(|| "XXXXXX".to_string());
+            *props.text.lock() = Some(s.clone());
+            Element::text(TextProps {
+                content: s.get(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn resize_repaints_cells_that_became_blank() {
+        // After a resize the terminal still shows the old frame — the redraw
+        // must overwrite every cell, *including* ones that are blank in the
+        // new frame. A diff against an assumed-blank baseline (the pre-fix
+        // `prev = None` behavior) skips exactly those cells, leaving stale
+        // text wherever content shrank across the resize.
+        let props = LabelProps::default();
+        let mut core = AppCore::new(Element::component::<Label>(props.clone()), (10, 2));
+        core.process_wakes();
+        let mut be = TestBackend::new(10, 2);
+        core.draw(&mut be).unwrap();
+        assert!(be.to_text().contains("XXXXXX"));
+
+        props.text.lock().clone().unwrap().set("Y".into());
+        core.resize(10, 2);
+        core.process_wakes();
+        core.draw(&mut be).unwrap();
+        let out = be.to_text();
+        assert!(out.contains('Y'), "{out:?}");
+        assert!(
+            !out.contains('X'),
+            "stale cells from before the resize were never cleared: {out:?}"
+        );
+    }
+
+    struct Wrapping;
+    impl Component for Wrapping {
+        type Props = ();
+        fn render(_: &(), _hooks: &mut Hooks) -> Element {
+            // `flex_direction: Column` + `width: Percent(1.0)` stretches the
+            // Text child to the View's full (resolved) width via
+            // `align_items: Stretch` on the cross axis, so it actually wraps
+            // at the available width instead of sizing to its unwrapped
+            // content length (see `widgets/divider.rs`'s comment on Text's
+            // min-content size).
+            Element::view(
+                ViewProps {
+                    flex_direction: FlexDirection::Column,
+                    width: Dimension::Percent(100.0),
+                    ..Default::default()
+                },
+                vec![Element::text(TextProps {
+                    content: "hello brave new world foo bar".into(),
+                    ..Default::default()
+                })],
+            )
+        }
+    }
+
+    #[test]
+    fn live_rows_gate_skips_recompute_unless_size_changes() {
+        let mut core = AppCore::new(Element::component::<Wrapping>(()), (20, 10));
+        core.process_wakes();
+
+        let first = core.live_rows(10, 10);
+        let second = core.live_rows(10, 10);
+        assert_eq!(
+            first, second,
+            "calling live_rows twice with the same size must be stable"
+        );
+        assert_eq!(core.live_size, Some((10, 10)));
+
+        let wider = core.live_rows(20, 10);
+        assert_eq!(core.live_size, Some((20, 10)));
+        assert_ne!(
+            wider.len(),
+            first.len(),
+            "a genuine width change must change how the text wraps"
+        );
     }
 
     #[test]
