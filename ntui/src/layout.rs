@@ -775,7 +775,6 @@ mod tests {
         let mut tree = FiberTree::new();
         let root = tree.mount_root(Element::component::<Wrapper>(WrapperProps), &rt);
         compute_layout(&mut tree, 20, 10);
-        // Walk down through the Component fiber to its Fragment child's kids.
         let frag = tree.get(root).children[0];
         let kids = tree.get(frag).children.clone();
         assert_eq!(
