@@ -6,12 +6,10 @@ import { withBase } from '../../lib/url';
 
 export async function getStaticPaths() {
   const entries = await getCollection('docs');
-  return DOCS_NAV.filter((item) => entries.some((e) => e.id === item.slug)).map((item) => {
-    const entry = entries.find((e) => e.id === item.slug)!;
-    return {
-      params: { slug: item.slug },
-      props: { nav: item, entry },
-    };
+  const bySlug = new Map(entries.map((e) => [e.id, e]));
+  return DOCS_NAV.flatMap((item) => {
+    const entry = bySlug.get(item.slug);
+    return entry ? [{ params: { slug: item.slug }, props: { nav: item, entry } }] : [];
   });
 }
 

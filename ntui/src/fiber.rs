@@ -183,6 +183,15 @@ impl FiberTree {
         let mut order = Vec::new();
         self.collect_dfs(root, &mut order);
         for id in order {
+            // Cheap read-only pre-scan: most fibers most frames have nothing
+            // pending, and skipping them avoids the mem::take/restore churn
+            // below while keeping exact DFS document order for the rest.
+            let has_pending = self.get(id).hooks.iter().any(
+                |slot| matches!(slot, crate::hooks::HookSlot::Effect(e) if e.pending.is_some()),
+            );
+            if !has_pending {
+                continue;
+            }
             // If user code panics mid-processing, this fiber's taken hook slots are dropped
             // un-restored; acceptable because a panic tears down the whole app (see RestoreGuard
             // in runtime.rs).

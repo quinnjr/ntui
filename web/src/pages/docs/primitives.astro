@@ -85,9 +85,11 @@ const primitives = [
       The five shapes a terminal tree can take
     </h1>
     <p class="mt-4 max-w-2xl text-stone-400">
-      ntui ships no buttons, no lists, no widget kit. Every component you write eventually lowers
-      to one of <strong class="text-stone-200">five</strong> node kinds, reconciled into a fiber
-      tree and painted as a grid of cells. That's the whole vocabulary.
+      Every component — including everything in the first-party
+      <code class="rounded border border-stone-800 bg-stone-900 px-1.5 py-0.5 font-mono text-orange-200">ntui::widgets</code>
+      module — eventually lowers to one of <strong class="text-stone-200">five</strong> node
+      kinds, reconciled into a fiber tree and painted as a grid of cells. That's the whole
+      vocabulary.
     </p>
 
     <div class="mt-12 border-t border-stone-800">
@@ -116,10 +118,12 @@ const primitives = [
 
     <div class="mt-12 border-t border-stone-800 pt-8">
       <p class="max-w-2xl text-stone-400">
-        <strong class="text-stone-200">No sixth primitive is coming.</strong> Buttons, lists, and
-        scroll regions are all just Views and Text, composed by your own components — which is
-        also why the widget-style escape hatches you'd expect from a TUI framework (mouse
-        regions, prebuilt lists) are still out of scope by design.
+        <strong class="text-stone-200">No sixth primitive is coming.</strong> The first-party
+        widget layer —
+        <code class="rounded border border-stone-800 bg-stone-900 px-1.5 py-0.5 font-mono text-orange-200">ntui::widgets</code>,
+        with buttons, selects, tables, modals, and the rest — is built entirely out of these
+        five node kinds, with no special engine access. Your own components compose from the
+        exact same vocabulary. (Mouse support remains out of scope by design.)
       </p>
     </div>
   </div>

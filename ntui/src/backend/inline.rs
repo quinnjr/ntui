@@ -59,7 +59,11 @@ impl InlineSink for InlineBackend {
         // Start the live region on a fresh line at column 0; no screen clear —
         // whatever is already in the terminal stays as scrollback above us.
         execute!(self.out, cursor::Hide, cursor::MoveToColumn(0)).inspect_err(|_| {
+            // Best-effort full restore on partial failure: cursor::Hide may
+            // have landed before the error, so re-show it too — same
+            // self-cleaning contract as FullscreenBackend::enter.
             let _ = terminal::disable_raw_mode();
+            let _ = execute!(self.out, cursor::Show);
         })
     }
 

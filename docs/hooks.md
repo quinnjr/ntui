@@ -93,6 +93,64 @@ hooks.use_future(move || async move {
 });
 ```
 
+## `use_task`
+
+```rust
+fn use_task<D: PartialEq + 'static, Fut: Future<Output = ()> + Send + 'static>(
+    &mut self,
+    deps: D,
+    make: impl FnOnce() -> Fut + 'static,
+)
+```
+
+`use_future`'s deps-keyed sibling: spawns `make()` after commit, and whenever
+`deps` changes between renders aborts the current task and spawns a fresh
+one (also aborted on unmount). Use it when the spawned work is a function of
+an input that can change — a timer keyed on a `Duration` prop, an animation
+driver keyed on its target — so stale work stops instead of racing its
+replacement. Same communication rules as `use_future`: talk back through
+`State<T>` handles only.
+
+```rust
+let f = fired.clone();
+hooks.use_task(duration, move || async move {
+    let Some(d) = duration else { return };
+    tokio::time::sleep(d).await;
+    f.set(true);
+});
+```
+
+## `use_interval` / `use_tween`
+
+```rust
+fn use_interval(&mut self, period: Duration, on_tick: impl FnMut() + Send + 'static)
+fn use_tween(&mut self, target: f32, duration: Duration) -> f32
+```
+
+`use_interval` calls `on_tick` every `period` for as long as the component
+stays mounted, starting after the first period elapses (one spawned task,
+aborted on unmount). `use_tween` animates toward `target` (ease-out-cubic),
+returning the current interpolated value each render; retargeting continues
+smoothly from wherever the value currently is, and its internal ~60Hz driver
+task runs only while the animation is in flight. If a timer closure panics,
+the task dies silently and the timer stops — same caveat as `use_future`.
+
+## `use_theme` / `use_focus_scope` / `use_focusable`
+
+```rust
+fn use_theme(&mut self) -> Theme
+fn use_focus_scope(&mut self) -> FocusScopeHandle
+fn use_focusable(&mut self) -> Focus
+```
+
+The widget layer's shared hooks (`ntui::widgets`). `use_theme` reads the
+nearest provided [`Theme`] (falling back to the built-in default), so custom
+components can match the first-party widgets' colors. `use_focus_scope`
+creates a Tab/Shift-Tab focus registry — provide the returned handle via
+`ContextProvider` — and `use_focusable` registers the calling component in
+the nearest scope, reporting `is_focused()` and offering `claim()`. See the
+widgets guide for the composition pattern.
+
 ## `use_context` / `ContextProvider`
 
 ```rust

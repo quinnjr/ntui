@@ -24,6 +24,11 @@ export const DOCS_NAV: NavItem[] = [
     description: 'Every hook, its signature, and when to reach for it.',
   },
   {
+    slug: 'widgets',
+    title: 'Widgets',
+    description: 'The first-party ntui::widgets layer: themed, focusable components built from the five primitives.',
+  },
+  {
     slug: 'architecture',
     title: 'Architecture',
     description: 'The fiber tree, reconciler, layout, paint, and the two rendering backends.',

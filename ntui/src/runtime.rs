@@ -37,6 +37,10 @@ pub(crate) struct AppCore {
     prev: Option<Buffer>,
     /// Spare buffer for `draw`'s double-buffering (see `draw`'s doc comment).
     scratch: Option<Buffer>,
+    /// Set by `resize`; makes the next `draw` rewrite every cell (blanks
+    /// included) instead of diffing, since the terminal's contents after a
+    /// resize no longer match `prev`.
+    force_full: bool,
     pub size: (u16, u16),
     pub exited: bool,
     /// Last `(width, max_height)` passed to `live_rows`, used to gate its
@@ -67,6 +71,7 @@ impl AppCore {
             pending: Vec::new(),
             prev: None,
             scratch: None,
+            force_full: false,
             size,
             exited: false,
             live_size: None,
@@ -164,15 +169,25 @@ impl AppCore {
             .unwrap_or_else(|| Buffer::new(self.size.0, self.size.1));
         buf.resize_and_clear(self.size.0, self.size.1);
         paint(&self.tree, &mut buf);
-        let blank;
-        let prev: &Buffer = match &self.prev {
-            Some(p) => p,
-            None => {
-                blank = Buffer::new(self.size.0, self.size.1);
-                &blank
-            }
+        let baseline;
+        let prev: &Buffer = if self.force_full {
+            // After a resize the terminal still shows the old frame in
+            // whatever cells the new frame doesn't overwrite — so diff
+            // against a size-mismatched baseline, which makes `Buffer::diff`
+            // emit every cell (blanks included), not just the non-blank ones
+            // a blank baseline would produce.
+            baseline = Buffer::new(0, 0);
+            &baseline
+        } else if let Some(p) = &self.prev {
+            p
+        } else {
+            // First frame: enter() left the screen cleared, so a blank
+            // baseline at the current size skips writing the blank cells.
+            baseline = Buffer::new(self.size.0, self.size.1);
+            &baseline
         };
         backend.flush(&buf.diff(prev))?;
+        self.force_full = false;
         self.scratch = self.prev.take();
         self.prev = Some(buf);
         Ok(())
@@ -227,7 +242,12 @@ impl AppCore {
             .lock()
             .unwrap_or_else(std::sync::PoisonError::into_inner) = (w, h);
         self.tree.layout_dirty = true;
-        self.prev = None; // full repaint
+        // Force a true full repaint on the next draw: the terminal still
+        // shows the old frame, so every cell — including ones blank in the
+        // new frame — must be rewritten. (Setting `prev = None` instead
+        // would diff against an assumed-blank screen and skip blank cells,
+        // leaving stale content wherever the new frame has none.)
+        self.force_full = true;
         // Push the root as dirty so components reading use_terminal_size()
         // re-render with the new size. The caller must invoke
         // process_wakes() after resize() to actually apply this;
@@ -637,9 +657,9 @@ mod tests {
 
         core.resize(10, 3);
         core.process_wakes();
-        // resize() forces prev = None, so this draw is a full repaint at the
-        // new size — it must overwrite every cell of the backend's buffer,
-        // including the leftover content from the (6, 2) frame above.
+        // resize() sets force_full, so this draw is a true full repaint at
+        // the new size — it must overwrite every cell of the backend's
+        // buffer, including the leftover content from the (6, 2) frame above.
         core.draw(&mut be).unwrap();
         let row0 = be.to_text().lines().next().unwrap().to_string();
         assert!(
@@ -649,6 +669,49 @@ mod tests {
         assert_eq!(
             core.prev.as_ref().map(|b| (b.width(), b.height())),
             Some((10, 3))
+        );
+    }
+
+    struct Label;
+    #[derive(Clone, PartialEq, Default)]
+    struct LabelProps {
+        text: crate::test_util::Shared<Option<crate::hooks::state::State<String>>>,
+    }
+    impl Component for Label {
+        type Props = LabelProps;
+        fn render(props: &LabelProps, hooks: &mut Hooks) -> Element {
+            let s = hooks.use_state(|| "XXXXXX".to_string());
+            *props.text.lock() = Some(s.clone());
+            Element::text(TextProps {
+                content: s.get(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn resize_repaints_cells_that_became_blank() {
+        // After a resize the terminal still shows the old frame — the redraw
+        // must overwrite every cell, *including* ones that are blank in the
+        // new frame. A diff against an assumed-blank baseline (the pre-fix
+        // `prev = None` behavior) skips exactly those cells, leaving stale
+        // text wherever content shrank across the resize.
+        let props = LabelProps::default();
+        let mut core = AppCore::new(Element::component::<Label>(props.clone()), (10, 2));
+        core.process_wakes();
+        let mut be = TestBackend::new(10, 2);
+        core.draw(&mut be).unwrap();
+        assert!(be.to_text().contains("XXXXXX"));
+
+        props.text.lock().clone().unwrap().set("Y".into());
+        core.resize(10, 2);
+        core.process_wakes();
+        core.draw(&mut be).unwrap();
+        let out = be.to_text();
+        assert!(out.contains('Y'), "{out:?}");
+        assert!(
+            !out.contains('X'),
+            "stale cells from before the resize were never cleared: {out:?}"
         );
     }
 

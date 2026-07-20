@@ -54,14 +54,15 @@ impl<'a> Hooks<'a> {
     ///
     /// Composite hook: internally one [`Hooks::use_state`] holding the
     /// animation's endpoints, one [`Hooks::use_effect`] that retargets it,
-    /// and one [`Hooks::use_interval`] (a ~60Hz tick) that keeps the
-    /// component re-rendering while the animation is in flight.
+    /// and one [`Hooks::use_task`] driving a ~60Hz re-render tick that runs
+    /// only while the animation is in flight — the task exits once the tween
+    /// settles and is respawned by the next retarget, so an idle animated
+    /// widget holds no live timer.
     ///
-    /// Built on [`Hooks::use_interval`] (in turn built on [`Hooks::use_future`]):
-    /// if the internal driving tick ever panics, the underlying task is
-    /// silently aborted and the animation stops advancing permanently for
-    /// the rest of the component's lifetime, with no error surfaced — same
-    /// caveat as [`Hooks::use_future`].
+    /// If the internal driving task ever panics, it is silently aborted and
+    /// the current animation stops advancing, with no error surfaced — same
+    /// caveat as [`Hooks::use_future`] (the next retarget spawns a fresh
+    /// driver, so later animations still run).
     pub fn use_tween(&mut self, target: f32, duration: Duration) -> f32 {
         let state = self.use_state(|| TweenState {
             from: target,
@@ -84,13 +85,23 @@ impl<'a> Hooks<'a> {
             });
         });
 
+        // Declared after the retarget effect above so that, sharing the same
+        // deps, the endpoints are updated before each fresh driver spawns.
         let tick = state.clone();
-        self.use_interval(Duration::from_millis(16), move || {
-            let s = tick.get();
-            if Instant::now().saturating_duration_since(s.start) < s.duration {
+        self.use_task(target.to_bits(), move || async move {
+            loop {
+                tokio::time::sleep(Duration::from_millis(16)).await;
+                let s = tick.get();
+                let done = s.from == s.to
+                    || Instant::now().saturating_duration_since(s.start) >= s.duration;
                 // Value is recomputed at read-time from (from, to, start);
-                // this update only exists to force the re-render.
+                // this update only exists to force the re-render. The final
+                // update lands one frame at (or past) the endpoint before
+                // the task exits.
                 tick.update(|_| {});
+                if done {
+                    break;
+                }
             }
         });
 

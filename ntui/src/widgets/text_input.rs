@@ -29,10 +29,20 @@ impl Component for TextInput {
         let focus = hooks.use_focusable();
         let is_focused = focus.is_focused();
 
+        // Keyed on focus so an unfocused input holds no live timer at all:
+        // losing focus aborts the blink task, gaining it spawns a fresh one
+        // (resetting the phase to visible so the caret shows immediately).
         let blink = hooks.use_state(|| true);
         let b = blink.clone();
-        hooks.use_interval(Duration::from_millis(500), move || {
-            b.update(|v| *v = !*v);
+        hooks.use_task(is_focused, move || async move {
+            if !is_focused {
+                return;
+            }
+            b.update(|v| *v = true);
+            loop {
+                tokio::time::sleep(Duration::from_millis(500)).await;
+                b.update(|v| *v = !*v);
+            }
         });
 
         let value = props.value.clone();
