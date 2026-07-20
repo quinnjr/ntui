@@ -5,6 +5,7 @@ use crate::hooks::input::KeyCode;
 use crate::props::{FlexDirection, TextProps, ViewProps};
 use crate::style::Weight;
 use crate::widgets::callback::Callback;
+use crate::widgets::select::use_clamped_index;
 
 /// A focusable tab strip: Left/Right moves the active tab and calls
 /// `on_change` with the new index, wrapping at the ends.
@@ -29,12 +30,7 @@ impl Component for Tabs {
         let is_focused = focus.is_focused();
         let len = props.labels.len();
 
-        let active = hooks.use_state(|| props.active.min(len.saturating_sub(1)));
-        let sync = active.clone();
-        let active_prop = props.active;
-        hooks.use_effect(active_prop, move || {
-            sync.set(active_prop.min(len.saturating_sub(1)));
-        });
+        let active = use_clamped_index(hooks, props.active, len);
 
         let a = active.clone();
         let on_change = props.on_change.clone();
@@ -181,5 +177,60 @@ mod tests {
         // compute 98 instead (99 != 0, so the old branch just decrements).
         t.send_key(KeyCode::Left).unwrap();
         assert_eq!(props.last.get(), Some(1));
+    }
+
+    #[tokio::test]
+    async fn shrinking_labels_reclamps_a_still_in_range_active_prop() {
+        // 5 tabs, `active: 4` is valid on mount. Pressing `s` shrinks the
+        // outer scope's own tab count down to 2 and re-renders `Tabs` with
+        // the *same* `active: 4` prop value, which is now out of range. The
+        // clamp effect must re-fire even though `active` itself didn't
+        // change, because `len` did.
+        struct ShrinkScope;
+        #[derive(Clone, PartialEq, Default)]
+        struct ShrinkScopeProps {
+            last: Rc<Cell<Option<usize>>>,
+        }
+        impl Component for ShrinkScope {
+            type Props = ShrinkScopeProps;
+            fn render(props: &ShrinkScopeProps, hooks: &mut Hooks) -> Element {
+                let scope = hooks.use_focus_scope();
+                let label_count = hooks.use_state(|| 5usize);
+                let lc = label_count.clone();
+                hooks.use_input(move |ev, _ctx| {
+                    if matches!(ev.code, KeyCode::Char('s')) {
+                        lc.set(2);
+                    }
+                });
+                let labels = (0..label_count.get()).map(|i| format!("tab{i}")).collect();
+                let last = props.last.clone();
+                Element::provider(
+                    scope,
+                    vec![Element::component::<Tabs>(TabsProps {
+                        labels,
+                        active: 4,
+                        on_change: Some(Callback::new(move |i| last.set(Some(i)))),
+                    })],
+                )
+            }
+        }
+        let props = ShrinkScopeProps {
+            last: Rc::new(Cell::new(None)),
+        };
+        let mut t =
+            TestTerminal::new(30, 1, Element::component::<ShrinkScope>(props.clone())).unwrap();
+
+        t.send_key(KeyCode::Char('s')).unwrap();
+
+        // If `active` correctly re-clamped to index 1 (the last valid tab
+        // among 2), Right wraps to 0. If it stayed stuck at the stale 4,
+        // Right computes `(4 + 1) % 2 == 1` instead — the clamped-vs-stale
+        // outcomes disagree (0 vs 1).
+        t.send_key(KeyCode::Right).unwrap();
+        assert_eq!(
+            props.last.get(),
+            Some(0),
+            "active should have re-clamped to the last valid index (1) and Right should wrap to 0"
+        );
     }
 }

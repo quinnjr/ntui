@@ -15,10 +15,11 @@ use crate::widgets::callback::Callback;
 /// block — explicit cell sizes sidestep that entirely.
 ///
 /// A cell grid has no real alpha, so "backdrop" here is a solid color (a
-/// darkened variant of the theme surface), not a see-through dim of whatever
-/// was underneath — and there's no drop-shadow rect, since that would need
-/// per-side padding this version of `ViewProps` doesn't have. Both are
-/// reasonable follow-ups, not gaps in this widget's correctness.
+/// darkened variant of the theme surface) — a see-through dim of whatever
+/// was underneath is not possible on a cell grid, not merely unimplemented.
+/// There is no drop-shadow rect either; unlike the alpha limitation, that
+/// one could be added later (an offset `View` behind the dialog) but isn't
+/// here yet.
 #[derive(Clone, PartialEq, Default)]
 pub struct ModalProps {
     pub title: String,

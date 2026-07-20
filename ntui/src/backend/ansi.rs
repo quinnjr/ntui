@@ -154,6 +154,35 @@ mod tests {
     }
 
     #[test]
+    fn write_row_breaks_the_run_on_a_style_change() {
+        let mut out = Vec::new();
+        let cells = [
+            Cell {
+                ch: 'h',
+                fg: Color::Red,
+                ..Cell::default()
+            },
+            Cell {
+                ch: 'i',
+                fg: Color::Blue,
+                ..Cell::default()
+            },
+        ];
+        write_row(&mut out, &cells).unwrap();
+        let s = String::from_utf8(out).unwrap();
+
+        assert!(s.contains('h') && s.contains('i'));
+        // A single coalesced run would print "hi" together under one style;
+        // a style change must break it into two separate Print payloads.
+        assert!(!s.contains("hi"));
+        // Two distinct SetForegroundColor sequences (red, then blue), not one.
+        let red = format!("{}", style::SetForegroundColor(to_ct(Color::Red)));
+        let blue = format!("{}", style::SetForegroundColor(to_ct(Color::Blue)));
+        assert_eq!(s.matches(&red).count(), 1);
+        assert_eq!(s.matches(&blue).count(), 1);
+    }
+
+    #[test]
     fn write_row_trims_trailing_blanks() {
         let mut out = Vec::new();
         let cells = [

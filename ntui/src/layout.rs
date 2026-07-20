@@ -602,6 +602,35 @@ mod tests {
     }
 
     #[test]
+    fn overlay_layer_bottom_left_anchor_sits_in_the_bottom_left_corner() {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        let root = tree.mount_root(
+            Element::view(
+                ViewProps {
+                    overlay: Some(crate::props::Anchor::BottomLeft),
+                    width: Dimension::Cells(4),
+                    height: Dimension::Cells(1),
+                    ..Default::default()
+                },
+                vec![],
+            ),
+            &rt,
+        );
+        compute_layout(&mut tree, 20, 10);
+        // height=1, EDGE_MARGIN=1: expect x = 1, y = 10-1-1 = 8.
+        assert_eq!(
+            tree.get(root).layout,
+            Rect {
+                x: 1,
+                y: 8,
+                width: 4,
+                height: 1
+            }
+        );
+    }
+
+    #[test]
     fn overlay_layer_top_right_anchor_with_auto_width_sized_to_content() {
         let (rt, _rx) = RuntimeHandle::test_handle();
         let mut tree = FiberTree::new();

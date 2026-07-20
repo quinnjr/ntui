@@ -43,6 +43,10 @@ pub(crate) struct AppCore {
     /// `compute_layout` call the same way `draw` gates on `layout_dirty` /
     /// `prev.is_none()`. `None` until the first `live_rows` call.
     live_size: Option<(u16, u16)>,
+    /// Spare buffer for `live_rows`'s double-buffering, mirroring `scratch`
+    /// (see `draw`'s doc comment) so inline mode doesn't allocate a fresh
+    /// `Buffer` every frame either.
+    live_scratch: Option<Buffer>,
 }
 
 impl AppCore {
@@ -66,6 +70,7 @@ impl AppCore {
             size,
             exited: false,
             live_size: None,
+            live_scratch: None,
         }
     }
 
@@ -181,9 +186,15 @@ impl AppCore {
             compute_layout(&mut self.tree, width, max_height);
             self.live_size = Some((width, max_height));
         }
-        let mut buf = Buffer::new(width, max_height);
+        let mut buf = self
+            .live_scratch
+            .take()
+            .unwrap_or_else(|| Buffer::new(width, max_height));
+        buf.resize_and_clear(width, max_height);
         paint(&self.tree, &mut buf);
-        trim_rows(buffer_rows(&buf))
+        let rows = trim_rows(buffer_rows(&buf));
+        self.live_scratch = Some(buf);
+        rows
     }
 
     /// Inline mode: drain queued scrollback elements, rendering each to rows to
@@ -452,7 +463,7 @@ mod tests {
     use crate::backend::inline::{InlineSink, RecordingSink};
     use crate::component::Component;
     use crate::hooks::Hooks;
-    use crate::props::{TextProps, ViewProps};
+    use crate::props::{Dimension, FlexDirection, TextProps, ViewProps};
 
     #[test]
     fn restore_guard_leaves_on_drop() {
@@ -591,6 +602,100 @@ mod tests {
         sink.commit(&committed).unwrap();
         let live = core.live_rows(w, h);
         sink.present(&live).unwrap();
+    }
+
+    struct SizeLabel;
+    impl Component for SizeLabel {
+        type Props = ();
+        fn render(_: &(), hooks: &mut Hooks) -> Element {
+            let (w, h) = hooks.use_terminal_size();
+            Element::text(TextProps {
+                content: format!("{w}x{h}"),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[test]
+    fn draw_double_buffer_reflects_new_dimensions_after_resize() {
+        // Backend sized to the larger of the two dimensions we'll draw at,
+        // so both frames' updates land fully inside its buffer.
+        let mut core = AppCore::new(Element::component::<SizeLabel>(()), (6, 2));
+        core.process_wakes();
+        let mut be = TestBackend::new(10, 3);
+
+        core.draw(&mut be).unwrap();
+        let row0 = be.to_text().lines().next().unwrap().to_string();
+        assert!(
+            row0.starts_with("6x2"),
+            "expected first frame to show 6x2, got {row0:?}"
+        );
+        assert_eq!(
+            core.prev.as_ref().map(|b| (b.width(), b.height())),
+            Some((6, 2))
+        );
+
+        core.resize(10, 3);
+        core.process_wakes();
+        // resize() forces prev = None, so this draw is a full repaint at the
+        // new size — it must overwrite every cell of the backend's buffer,
+        // including the leftover content from the (6, 2) frame above.
+        core.draw(&mut be).unwrap();
+        let row0 = be.to_text().lines().next().unwrap().to_string();
+        assert!(
+            row0.starts_with("10x3"),
+            "expected second frame to show 10x3, got {row0:?}"
+        );
+        assert_eq!(
+            core.prev.as_ref().map(|b| (b.width(), b.height())),
+            Some((10, 3))
+        );
+    }
+
+    struct Wrapping;
+    impl Component for Wrapping {
+        type Props = ();
+        fn render(_: &(), _hooks: &mut Hooks) -> Element {
+            // `flex_direction: Column` + `width: Percent(1.0)` stretches the
+            // Text child to the View's full (resolved) width via
+            // `align_items: Stretch` on the cross axis, so it actually wraps
+            // at the available width instead of sizing to its unwrapped
+            // content length (see `widgets/divider.rs`'s comment on Text's
+            // min-content size).
+            Element::view(
+                ViewProps {
+                    flex_direction: FlexDirection::Column,
+                    width: Dimension::Percent(100.0),
+                    ..Default::default()
+                },
+                vec![Element::text(TextProps {
+                    content: "hello brave new world foo bar".into(),
+                    ..Default::default()
+                })],
+            )
+        }
+    }
+
+    #[test]
+    fn live_rows_gate_skips_recompute_unless_size_changes() {
+        let mut core = AppCore::new(Element::component::<Wrapping>(()), (20, 10));
+        core.process_wakes();
+
+        let first = core.live_rows(10, 10);
+        let second = core.live_rows(10, 10);
+        assert_eq!(
+            first, second,
+            "calling live_rows twice with the same size must be stable"
+        );
+        assert_eq!(core.live_size, Some((10, 10)));
+
+        let wider = core.live_rows(20, 10);
+        assert_eq!(core.live_size, Some((20, 10)));
+        assert_ne!(
+            wider.len(),
+            first.len(),
+            "a genuine width change must change how the text wraps"
+        );
     }
 
     #[test]

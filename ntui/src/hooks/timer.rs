@@ -17,6 +17,7 @@ impl<'a> Hooks<'a> {
     pub fn use_interval(&mut self, period: Duration, mut on_tick: impl FnMut() + Send + 'static) {
         self.use_future(move || async move {
             let mut interval = tokio::time::interval(period);
+            interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
             interval.tick().await; // first tick fires immediately; skip it.
             loop {
                 interval.tick().await;

@@ -176,6 +176,59 @@ mod tests {
     }
 
     #[test]
+    fn resize_and_clear_reuses_allocation_when_size_unchanged() {
+        let mut b = Buffer::new(3, 2);
+        b.set(
+            1,
+            1,
+            Cell {
+                ch: 'x',
+                fg: Color::Red,
+                ..Cell::default()
+            },
+        );
+        b.resize_and_clear(3, 2);
+        assert_eq!(b.width(), 3);
+        assert_eq!(b.height(), 2);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
+    }
+
+    #[test]
+    fn resize_and_clear_grows_and_shrinks() {
+        let mut b = Buffer::new(3, 3);
+        b.set(
+            0,
+            0,
+            Cell {
+                ch: 'x',
+                ..Cell::default()
+            },
+        );
+
+        b.resize_and_clear(5, 2);
+        assert_eq!(b.width(), 5);
+        assert_eq!(b.height(), 2);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
+
+        b.resize_and_clear(1, 1);
+        assert_eq!(b.width(), 1);
+        assert_eq!(b.height(), 1);
+        for y in 0..b.height() {
+            for x in 0..b.width() {
+                assert_eq!(*b.get(x, y), Cell::default());
+            }
+        }
+    }
+
+    #[test]
     fn to_text_renders_grid() {
         let mut b = Buffer::new(3, 2);
         b.set(

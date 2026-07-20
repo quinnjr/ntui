@@ -23,8 +23,11 @@ pub enum Dimension {
 /// still just a `View` prop, not a new element kind.
 ///
 /// Nesting an overlay `View` inside another overlay `View` isn't supported —
-/// the inner one is silently not painted. None of the built-in overlay
-/// widgets nest, so this only matters for custom overlay compositions.
+/// the inner one is not painted. In debug builds (including `cargo test` and
+/// CI) this panics via a `debug_assert!` so misuse is caught during
+/// development; release builds silently drop the inner overlay instead. None
+/// of the built-in overlay widgets nest, so this only matters for custom
+/// overlay compositions.
 #[non_exhaustive]
 #[derive(Clone, Copy, PartialEq, Eq, Debug, Default)]
 pub enum Anchor {

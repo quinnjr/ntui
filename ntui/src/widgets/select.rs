@@ -2,9 +2,23 @@ use crate::component::Component;
 use crate::element::Element;
 use crate::hooks::Hooks;
 use crate::hooks::input::KeyCode;
+use crate::hooks::state::State;
 use crate::props::{FlexDirection, TextProps, ViewProps};
 use crate::style::Color;
 use crate::widgets::callback::Callback;
+
+/// A controlled index that stays valid even if `len` shrinks or `prop_value`
+/// is out of range: clamped both at initialization and on every render where
+/// `prop_value` or `len` changes (so a shrinking list re-clamps even when
+/// `prop_value` itself is unchanged).
+pub(crate) fn use_clamped_index(hooks: &mut Hooks, prop_value: usize, len: usize) -> State<usize> {
+    let state = hooks.use_state(|| prop_value.min(len.saturating_sub(1)));
+    let sync = state.clone();
+    hooks.use_effect((prop_value, len), move || {
+        sync.set(prop_value.min(len.saturating_sub(1)));
+    });
+    state
+}
 
 /// A focusable single-select list: Up/Down moves the highlighted row and
 /// calls `on_change` with the new index. `items` must be non-empty for
@@ -28,12 +42,7 @@ impl Component for Select {
         let is_focused = focus.is_focused();
         let len = props.items.len();
 
-        let cursor = hooks.use_state(|| props.selected.min(len.saturating_sub(1)));
-        let sync = cursor.clone();
-        let selected_prop = props.selected;
-        hooks.use_effect(selected_prop, move || {
-            sync.set(selected_prop.min(len.saturating_sub(1)));
-        });
+        let cursor = use_clamped_index(hooks, props.selected, len);
 
         let c = cursor.clone();
         let on_change = props.on_change.clone();
@@ -179,6 +188,62 @@ mod tests {
         // unclamped 99, Down would land on (99 + 1) % 3 == 1 instead.
         t.send_key(KeyCode::Down).unwrap();
         assert_eq!(last.get(), Some(0));
+    }
+
+    #[tokio::test]
+    async fn shrinking_items_reclamps_a_still_in_range_selected_prop() {
+        // 5 items, `selected: 4` is valid on mount. Pressing `s` shrinks the
+        // outer scope's own item count down to 2 and re-renders `Select`
+        // with the *same* `selected: 4` prop value, which is now out of
+        // range. The clamp effect must re-fire even though `selected` itself
+        // didn't change, because `len` did.
+        struct ShrinkScope;
+        #[derive(Clone, PartialEq, Default)]
+        struct ShrinkScopeProps {
+            last: Rc<Cell<Option<usize>>>,
+        }
+        impl Component for ShrinkScope {
+            type Props = ShrinkScopeProps;
+            fn render(props: &ShrinkScopeProps, hooks: &mut Hooks) -> Element {
+                let scope = hooks.use_focus_scope();
+                let item_count = hooks.use_state(|| 5usize);
+                let ic = item_count.clone();
+                hooks.use_input(move |ev, _ctx| {
+                    if matches!(ev.code, KeyCode::Char('s')) {
+                        ic.set(2);
+                    }
+                });
+                let items = (0..item_count.get()).map(|i| format!("item{i}")).collect();
+                let last = props.last.clone();
+                Element::provider(
+                    scope,
+                    vec![Element::component::<Select>(SelectProps {
+                        items,
+                        selected: 4,
+                        on_change: Some(Callback::new(move |i| last.set(Some(i)))),
+                    })],
+                )
+            }
+        }
+        let props = ShrinkScopeProps {
+            last: Rc::new(Cell::new(None)),
+        };
+        let mut t =
+            TestTerminal::new(10, 5, Element::component::<ShrinkScope>(props.clone())).unwrap();
+
+        t.send_key(KeyCode::Char('s')).unwrap();
+
+        // If the cursor correctly re-clamped to index 1 (the last valid item
+        // among 2), Down wraps to 0. If it stayed stuck at the stale 4, the
+        // un-modulo'd `Up` handler would compute `4 - 1 == 3`, still out of
+        // range for a 2-item list — so use Down here, which does modulo and
+        // makes the clamped-vs-stale outcomes disagree (0 vs 1).
+        t.send_key(KeyCode::Down).unwrap();
+        assert_eq!(
+            props.last.get(),
+            Some(0),
+            "selected should have re-clamped to the last valid index (1) and Down should wrap to 0"
+        );
     }
 
     #[tokio::test]
