@@ -32,7 +32,7 @@
 //! - [`Component`]: the trait implemented (usually via `#[component]`) to render props
 //!   and hooks into an [`Element`].
 //! - [`Hooks`]: per-fiber hook state, exposing `use_state`, `use_effect`, `use_input`,
-//!   and friends during a component's render.
+//!   `use_paste`, and friends during a component's render.
 //! - [`render`]: runs a component tree fullscreen against the real terminal until the
 //!   app exits.
 //! - [`testing::TestTerminal`]: drives a component tree headlessly, frame by frame, for

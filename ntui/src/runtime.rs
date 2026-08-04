@@ -43,6 +43,11 @@ pub(crate) struct AppCore {
     force_full: bool,
     pub size: (u16, u16),
     pub exited: bool,
+    /// Clipboard payloads queued via `Wake::CopyToClipboard`, drained by the
+    /// backend-driving layer (run loops, `TestTerminal`) through
+    /// [`Self::take_pending_clipboard`] — `AppCore` itself never touches a
+    /// terminal handle.
+    pending_clipboard: Vec<String>,
     /// Last `(width, max_height)` passed to `live_rows`, used to gate its
     /// `compute_layout` call the same way `draw` gates on `layout_dirty` /
     /// `prev.is_none()`. `None` until the first `live_rows` call.
@@ -74,6 +79,7 @@ impl AppCore {
             force_full: false,
             size,
             exited: false,
+            pending_clipboard: Vec::new(),
             live_size: None,
             live_scratch: None,
         }
@@ -89,7 +95,15 @@ impl AppCore {
                 self.prev = None; // full repaint
             }
             Wake::Exit => self.exited = true,
+            Wake::CopyToClipboard(text) => self.pending_clipboard.push(text),
         }
+    }
+
+    /// Drains queued clipboard payloads (see the `pending_clipboard` field).
+    /// The caller writes each to the backend; call before drawing so a copy
+    /// lands on the same frame that requested it.
+    pub fn take_pending_clipboard(&mut self) -> Vec<String> {
+        std::mem::take(&mut self.pending_clipboard)
     }
 
     /// Drain the wake channel, re-render dirty fibers shallowest-first,
@@ -133,6 +147,19 @@ impl AppCore {
         let mut ctx = crate::hooks::input::InputCtx { stopped: false };
         for h in handlers {
             h.borrow_mut()(ev, &mut ctx);
+            if ctx.stopped {
+                break;
+            }
+        }
+    }
+
+    /// Route a bracketed-paste event deepest-first through mounted `use_paste`
+    /// handlers, with the same bubbling semantics as [`Self::dispatch_key`].
+    pub fn dispatch_paste(&mut self, text: &str) {
+        let handlers = self.tree.collect_paste_handlers();
+        let mut ctx = crate::hooks::input::InputCtx { stopped: false };
+        for h in handlers {
+            h.borrow_mut()(text, &mut ctx);
             if ctx.stopped {
                 break;
             }
@@ -290,7 +317,8 @@ fn install_panic_hook() {
             let _ = crossterm::execute!(
                 std::io::stdout(),
                 crossterm::cursor::Show,
-                crossterm::terminal::LeaveAlternateScreen
+                crossterm::terminal::LeaveAlternateScreen,
+                crossterm::event::DisableBracketedPaste
             );
             prev(info);
         }));
@@ -315,6 +343,7 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
     let size = guard.backend.size()?;
     let mut core = AppCore::new(el, size);
     core.process_wakes();
+    flush_clipboard(&mut core, guard.backend);
     core.draw(guard.backend)?;
 
     let mut events = EventStream::new();
@@ -324,6 +353,7 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
         tokio::select! {
             ev = events.next() => match ev {
                 Some(Ok(Event::Key(k))) => core.dispatch_key(k),
+                Some(Ok(Event::Paste(s))) => core.dispatch_paste(&s),
                 Some(Ok(Event::Resize(w, h))) => core.resize(w, h),
                 Some(Err(e)) => return Err(e.into()),
                 None => break, // stdin closed
@@ -338,6 +368,7 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
         for _ in 0..MAX_EVENT_BURST {
             match events.next().now_or_never() {
                 Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                Some(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
                 Some(Some(Ok(Event::Resize(w, h)))) => core.resize(w, h),
                 Some(Some(Ok(_))) => {}
                 Some(Some(Err(e))) => return Err(e.into()),
@@ -345,6 +376,9 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
             }
         }
         core.process_wakes();
+        // Flushed before the exited check so a copy queued in the same pass
+        // as `app.exit()` (yank-and-quit) still reaches the terminal.
+        flush_clipboard(&mut core, guard.backend);
         if core.exited {
             break;
         }
@@ -353,6 +387,7 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
         if elapsed < FRAME {
             tokio::time::sleep(FRAME - elapsed).await;
             core.process_wakes();
+            flush_clipboard(&mut core, guard.backend);
             if core.exited {
                 break;
             }
@@ -361,10 +396,20 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
         // so discard anything use_scrollback queued to keep it from growing without
         // bound. Committing under render() is a documented no-op.
         core.rt.scrollback.borrow_mut().clear();
+        flush_clipboard(&mut core, guard.backend);
         core.draw(guard.backend)?;
         last_frame = Instant::now();
     }
     Ok(()) // guard drops here -> leave()
+}
+
+/// Writes any clipboard payloads queued since the last frame to the backend.
+/// Best-effort: a failed OSC 52 write (or a terminal that ignores it) must
+/// not take down the render loop.
+fn flush_clipboard<B: Backend + ?Sized>(core: &mut AppCore, backend: &mut B) {
+    for text in core.take_pending_clipboard() {
+        let _ = backend.copy_to_clipboard(&text);
+    }
 }
 
 /// Drop trailing all-blank rows so the live/committed region is content-sized.
@@ -426,6 +471,7 @@ async fn run_inline_loop<S: InlineSink>(
         tokio::select! {
             ev = events.next() => match ev {
                 Some(Ok(Event::Key(k))) => core.dispatch_key(k),
+                Some(Ok(Event::Paste(s))) => core.dispatch_paste(&s),
                 Some(Ok(Event::Resize(nw, nh))) => core.resize(nw, nh),
                 Some(Err(e)) => return Err(e.into()),
                 None => break,
@@ -439,6 +485,7 @@ async fn run_inline_loop<S: InlineSink>(
         for _ in 0..MAX_EVENT_BURST {
             match events.next().now_or_never() {
                 Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                Some(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
                 Some(Some(Ok(Event::Resize(nw, nh)))) => core.resize(nw, nh),
                 Some(Some(Ok(_))) => {}
                 Some(Some(Err(e))) => return Err(e.into()),
@@ -446,6 +493,9 @@ async fn run_inline_loop<S: InlineSink>(
             }
         }
         core.process_wakes();
+        // Same yank-and-quit rule as run_loop: a copy queued in the exiting
+        // pass must still be written before the loop breaks.
+        flush_clipboard_inline(&mut core, guard.backend);
         if core.exited {
             break;
         }
@@ -453,6 +503,7 @@ async fn run_inline_loop<S: InlineSink>(
         if elapsed < FRAME {
             tokio::time::sleep(FRAME - elapsed).await;
             core.process_wakes();
+            flush_clipboard_inline(&mut core, guard.backend);
             if core.exited {
                 break;
             }
@@ -466,6 +517,7 @@ async fn run_inline_loop<S: InlineSink>(
 /// Commit any queued scrollback rows, then redraw the live region.
 #[cfg_attr(coverage_nightly, coverage(off))]
 fn commit_and_present<S: InlineSink>(core: &mut AppCore, backend: &mut S) -> Result<(), Error> {
+    flush_clipboard_inline(core, backend);
     let (w, h) = core.size;
     let committed = core.take_committed(w, h);
     if !committed.is_empty() {
@@ -474,6 +526,14 @@ fn commit_and_present<S: InlineSink>(core: &mut AppCore, backend: &mut S) -> Res
     let live = core.live_rows(w, h);
     backend.present(&live)?;
     Ok(())
+}
+
+/// `flush_clipboard` for the inline sink — same best-effort rule: a failed
+/// OSC 52 write must not take down the loop.
+fn flush_clipboard_inline<S: InlineSink>(core: &mut AppCore, backend: &mut S) {
+    for text in core.take_pending_clipboard() {
+        let _ = backend.copy_to_clipboard(&text);
+    }
 }
 
 #[cfg(test)]

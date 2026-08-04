@@ -2,7 +2,7 @@
 
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-use crate::backend::TestBackend;
+use crate::backend::{Backend, TestBackend};
 use crate::element::Element;
 use crate::error::Error;
 use crate::runtime::AppCore;
@@ -29,6 +29,7 @@ impl TestTerminal {
             backend: TestBackend::new(width, height),
         };
         t.core.process_wakes();
+        t.flush_clipboard();
         t.core.draw(&mut t.backend)?;
         Ok(t)
     }
@@ -39,15 +40,19 @@ impl TestTerminal {
             tokio::task::yield_now().await;
         }
         self.core.process_wakes();
+        self.flush_clipboard();
         self.core.draw(&mut self.backend)
     }
 
     /// Resizes the virtual terminal and redraws a full frame at the new
-    /// size.
+    /// size. Clipboard history is kept across the resize.
     pub fn resize(&mut self, width: u16, height: u16) -> Result<(), Error> {
+        let clipboard = std::mem::take(&mut self.backend.clipboard);
         self.backend = TestBackend::new(width, height);
+        self.backend.clipboard = clipboard;
         self.core.resize(width, height);
         self.core.process_wakes();
+        self.flush_clipboard();
         self.core.draw(&mut self.backend)
     }
 
@@ -71,7 +76,29 @@ impl TestTerminal {
     pub fn send_key_event(&mut self, ev: KeyEvent) -> Result<(), Error> {
         self.core.dispatch_key(ev);
         self.core.process_wakes();
+        self.flush_clipboard();
         self.core.draw(&mut self.backend)
+    }
+
+    /// Dispatches a bracketed-paste event through mounted `use_paste`
+    /// handlers, applies any resulting wakes, and redraws.
+    pub fn send_paste(&mut self, text: &str) -> Result<(), Error> {
+        self.core.dispatch_paste(text);
+        self.core.process_wakes();
+        self.flush_clipboard();
+        self.core.draw(&mut self.backend)
+    }
+
+    /// Clipboard payloads the app has sent via `AppHandle::copy_to_clipboard`
+    /// and that have been flushed to the (test) backend, oldest first.
+    pub fn clipboard(&self) -> &[String] {
+        &self.backend.clipboard
+    }
+
+    fn flush_clipboard(&mut self) {
+        for text in self.core.take_pending_clipboard() {
+            self.backend.copy_to_clipboard(&text).unwrap();
+        }
     }
 }
 

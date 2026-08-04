@@ -14,6 +14,7 @@ pub(crate) enum HookSlot {
     State(Box<dyn std::any::Any>), // holds a State<T>
     Effect(effect::EffectSlot),
     Input(input::InputHandler),
+    Paste(input::PasteHandler),
     Task(tokio::task::JoinHandle<()>),
 }
 
@@ -28,6 +29,7 @@ impl HookSlot {
                 }
             }
             HookSlot::Input(_) => {}
+            HookSlot::Paste(_) => {}
             HookSlot::Task(handle) => handle.abort(),
         }
     }
@@ -38,6 +40,10 @@ pub(crate) enum Wake {
     Dirty(FiberId),
     Redraw, // full re-render from the root
     Exit,
+    /// A component asked to set the system clipboard (OSC 52); queued in
+    /// `AppCore::pending_clipboard` and written out by the backend-driving
+    /// layer, which owns the terminal handle.
+    CopyToClipboard(String),
 }
 
 #[derive(Clone)]
