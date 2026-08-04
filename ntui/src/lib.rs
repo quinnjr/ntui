@@ -32,7 +32,7 @@
 //! - [`Component`]: the trait implemented (usually via `#[component]`) to render props
 //!   and hooks into an [`Element`].
 //! - [`Hooks`]: per-fiber hook state, exposing `use_state`, `use_effect`, `use_input`,
-//!   and friends during a component's render.
+//!   `use_paste`, and friends during a component's render.
 //! - [`render`]: runs a component tree fullscreen against the real terminal until the
 //!   app exits.
 //! - [`testing::TestTerminal`]: drives a component tree headlessly, frame by frame, for
@@ -56,6 +56,7 @@ pub(crate) mod paint;
 pub mod props;
 pub(crate) mod reconciler;
 pub(crate) mod runtime;
+pub mod shared;
 pub mod style;
 #[cfg(test)]
 pub(crate) mod test_util;
@@ -71,6 +72,7 @@ pub use hooks::Hooks;
 pub use hooks::app::AppHandle;
 pub use hooks::effect::Cleanup;
 pub use hooks::input::{InputCtx, KeyCode, KeyEvent, KeyEventKind, KeyModifiers};
+pub use hooks::list::ListSelection;
 pub use hooks::scroll::Scroll;
 pub use hooks::scrollback::Scrollback;
 pub use hooks::state::State;
@@ -80,6 +82,7 @@ pub use props::{
     TextProps, TextWrap, ViewProps,
 };
 pub use runtime::{render, render_inline};
+pub use shared::Shared;
 pub use style::{Attrs, BorderStyle, Color, Weight};
 
 /// Internal, unstable surface for out-of-crate test tooling (benchmarks and

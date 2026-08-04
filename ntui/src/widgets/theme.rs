@@ -9,6 +9,44 @@ use crate::style::{BorderStyle, Color};
 /// `element! { ContextProvider(value: my_theme) { ... } }`; widgets read the
 /// nearest one via [`use_theme`], falling back to [`Theme::default`] when
 /// none is provided.
+///
+/// # When these tokens are not enough
+///
+/// `Theme` is deliberately small: eight tokens that mean the same thing in
+/// every app, so `ntui::widgets` can share a palette without inventing
+/// vocabulary for domains it knows nothing about. An app whose colors carry
+/// meaning of their own — a monitor that needs distinct shades for user,
+/// system, nice, irq and iowait time all at once, an editor with syntax
+/// classes, a diff view — will run out of tokens here, and stretching
+/// `accent`/`danger`/`success` to cover them loses the meaning.
+///
+/// The escape hatch is that context is not limited to `Theme`. Define your
+/// own palette type and provide it the same way; the two coexist, with
+/// `Theme` continuing to style the first-party widgets underneath.
+///
+/// ```
+/// use ntui::{Color, Component, Element, Hooks, props::TextProps};
+///
+/// #[derive(Clone, Copy, PartialEq)]
+/// struct Palette { user: Color, system: Color, iowait: Color }
+///
+/// struct Meter;
+/// # #[derive(Clone, PartialEq, Default)]
+/// # struct MeterProps;
+/// impl Component for Meter {
+///     type Props = MeterProps;
+///     fn render(_: &MeterProps, hooks: &mut Hooks) -> Element {
+///         // The app's own vocabulary, alongside the widget theme.
+///         let palette = hooks.use_context::<Palette>();
+///         let color = palette.map(|p| p.user).unwrap_or(Color::Green);
+///         Element::text(TextProps { content: "▇▇▇".into(), color, ..Default::default() })
+///     }
+/// }
+/// ```
+///
+/// Provide it above the tree with
+/// `Element::provider(my_palette, vec![...])`, or the `ContextProvider`
+/// widget inside `element!`.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub struct Theme {
     /// The theme's signature color: focus rings, active/selected state,

@@ -20,16 +20,19 @@ terminal.
 ## Features
 
 - **Components + hooks first** — `#[component]` functions and
-  `use_state` / `use_effect` / `use_input` / `use_future` / `use_task` /
-  `use_stream` / `use_interval` / `use_tween` / `use_context` /
-  `use_terminal_size` / `use_scroll` / `use_scrollback` / `use_app`,
-  mirroring React's hook rules (identity by call order).
+  `use_state` / `use_effect` / `use_input` / `use_paste` / `use_future` /
+  `use_task` / `use_stream` / `use_interval` / `use_tween` / `use_memo` /
+  `use_context` / `use_terminal_size` / `use_scroll` / `use_scrollback` /
+  `use_list_selection` / `use_app`, mirroring React's hook rules (identity
+  by call order).
 - **A first-party widget layer** (`ntui::widgets`) built entirely from the
   core primitives — `Button`, `Checkbox`/`Toggle`, `Select`, `Table`, `Tabs`,
   `TextInput`, `Modal`, `Toast`, `Tooltip`, `Spinner`, `ProgressBar`,
   `Badge`, `Divider`, `GradientText`, `Banner` — with theming (`use_theme`)
   and Tab-cycling focus management (`use_focus_scope` / `use_focusable`).
   Optional: your own components use the exact same five element kinds.
+- **`Shared<T>`** — an `Arc` compared by pointer rather than by value, for
+  prop payloads too large to deep-compare on every frame.
 - **`element!`**, a JSX-like macro for building `View`/`Text` trees with typed
   props, keyed children, and `#(...)` for iterators/fragments.
 - **A real reconciler**, not a diff-and-repaint-everything loop: a retained
@@ -53,7 +56,7 @@ terminal.
 
 ```toml
 [dependencies]
-ntui = "0.2"
+ntui = "0.3"
 ```
 
 Requires Rust 2024 edition (a recent stable toolchain).

@@ -1,6 +1,6 @@
 use std::io::{self, BufWriter, Stdout, Write};
 
-use crossterm::{cursor, execute, queue, style, terminal};
+use crossterm::{cursor, event, execute, queue, style, terminal};
 
 use crate::backend::Backend;
 use crate::backend::ansi::to_ct;
@@ -43,24 +43,44 @@ impl Backend for FullscreenBackend {
             self.out,
             terminal::EnterAlternateScreen,
             cursor::Hide,
-            terminal::Clear(terminal::ClearType::All)
+            terminal::Clear(terminal::ClearType::All),
+            event::EnableBracketedPaste
         )
         .inspect_err(|_| {
             // Raw mode is already on and we may have partially entered the
             // alternate screen / hidden the cursor; undo whatever happened so
             // a failed enter never leaks a broken shell.
             let _ = terminal::disable_raw_mode();
-            let _ = execute!(self.out, terminal::LeaveAlternateScreen, cursor::Show);
+            let _ = execute!(
+                self.out,
+                terminal::LeaveAlternateScreen,
+                cursor::Show,
+                event::DisableBracketedPaste
+            );
         })
     }
 
     fn leave(&mut self) -> io::Result<()> {
-        execute!(self.out, cursor::Show, terminal::LeaveAlternateScreen)?;
+        execute!(
+            self.out,
+            cursor::Show,
+            terminal::LeaveAlternateScreen,
+            event::DisableBracketedPaste
+        )?;
         terminal::disable_raw_mode()
     }
 
     fn flush(&mut self, updates: &[CellUpdate]) -> io::Result<()> {
         write_coalesced_updates(&mut self.out, updates)?;
+        self.out.flush()
+    }
+
+    fn copy_to_clipboard(&mut self, text: &str) -> io::Result<()> {
+        write!(
+            self.out,
+            "{}",
+            crate::backend::ansi::osc52_copy_payload(text)
+        )?;
         self.out.flush()
     }
 }

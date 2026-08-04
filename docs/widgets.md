@@ -21,7 +21,7 @@ core primitives, not a dependency of them.
 | `Button` | Focusable; Enter/Space fires `on_press` |
 | `Checkbox` / `Toggle` | Focusable; Enter/Space flips and reports via `on_change` |
 | `Select` | Focusable list; Up/Down moves the highlight, wrapping at the ends |
-| `Table` | Static grid; columns auto-size to the widest header/cell |
+| `Table` | Grid; columns auto-size to the widest header/cell. Optional `selected` row, `viewport` (renders only a slice of a long list), and `cell_style` for per-cell colour |
 | `Tabs` | Focusable tab strip; Left/Right moves the active tab |
 | `TextInput` | Focusable single-line field with a blinking caret |
 | `Modal` | Centered dialog over a full-screen backdrop; Esc calls `on_close` |

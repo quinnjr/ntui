@@ -17,6 +17,14 @@ impl AppHandle {
     pub fn redraw(&self) {
         let _ = self.wake.send(Wake::Redraw);
     }
+
+    /// Ask the running app to set the system clipboard to `text` (OSC 52,
+    /// written by the backend on the next frame). Delivery is asynchronous
+    /// and best-effort: the terminal emulator may ignore or gate the
+    /// sequence, and backends without a real terminal no-op it.
+    pub fn copy_to_clipboard(&self, text: impl Into<String>) {
+        let _ = self.wake.send(Wake::CopyToClipboard(text.into()));
+    }
 }
 
 impl<'a> Hooks<'a> {
@@ -114,5 +122,36 @@ mod tests {
         assert!(matches!(rx.try_recv(), Ok(Wake::Redraw)));
         app.exit();
         assert!(matches!(rx.try_recv(), Ok(Wake::Exit)));
+        app.copy_to_clipboard("hello clipboard");
+        assert!(matches!(
+            rx.try_recv(),
+            Ok(Wake::CopyToClipboard(text)) if text == "hello clipboard"
+        ));
+    }
+
+    #[tokio::test]
+    async fn copy_to_clipboard_reaches_the_backend_on_the_next_frame() {
+        use crate::props::ViewProps;
+
+        struct ClipApp;
+        #[derive(Clone, PartialEq, Default)]
+        struct ClipAppProps;
+        impl Component for ClipApp {
+            type Props = ClipAppProps;
+            fn render(_: &ClipAppProps, hooks: &mut Hooks) -> Element {
+                let app = hooks.use_app();
+                hooks.use_input(move |ev, _| {
+                    if ev.code == KeyCode::Char('y') {
+                        app.copy_to_clipboard("yanked text");
+                    }
+                });
+                Element::view(ViewProps::default(), vec![])
+            }
+        }
+
+        let mut t = TestTerminal::new(10, 2, Element::component::<ClipApp>(ClipAppProps)).unwrap();
+        assert!(t.clipboard().is_empty());
+        t.send_key(KeyCode::Char('y')).unwrap();
+        assert_eq!(t.clipboard(), &["yanked text".to_string()]);
     }
 }

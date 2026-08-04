@@ -63,6 +63,17 @@ State::set ──► Wake::Dirty on unbounded channel
    children: matched by explicit `key` first, then by index + node type.
    `props_eq` lets a whole matched subtree skip re-rendering when its props
    didn't change — this is where big trees stay cheap.
+
+   That comparison is by *value*, which inverts for a large payload: passing
+   a list of several hundred items down as `Arc<Vec<Item>>` deep-compares the
+   whole list every frame, since `Arc`'s own `PartialEq` compares pointees —
+   more expensive than the render it exists to skip. `Shared<T>` is an `Arc`
+   whose `PartialEq` is `Arc::ptr_eq`, which is both cheaper and, for the
+   usual producer pattern, more accurate: code that rebuilds its payload each
+   tick hands down a fresh allocation, so identity already answers "did this
+   change?". Note that `Shared::default()` allocates, so a defaulted field
+   compares unequal every render and defeats the very short-circuit it is
+   there to enable.
 4. **Layout.** If reconciliation touched anything layout-affecting
    (`layout_dirty`), `layout::compute_layout` rebuilds a fresh `taffy` tree
    from the current fibers and writes a `Rect` back onto each one. Text nodes

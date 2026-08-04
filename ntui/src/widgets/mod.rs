@@ -44,7 +44,7 @@ pub use modal::{Modal, ModalProps};
 pub use progress::{ProgressBar, ProgressBarProps};
 pub use select::{Select, SelectProps};
 pub use spinner::{Spinner, SpinnerProps};
-pub use table::{Table, TableProps};
+pub use table::{CellContext, CellStyle, CellStyler, Table, TableProps, Viewport};
 pub use tabs::{Tabs, TabsProps};
 pub use text_input::{TextInput, TextInputProps};
 pub use toast::{Toast, ToastProps};

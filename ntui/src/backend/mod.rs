@@ -20,4 +20,11 @@ pub trait Backend {
     fn leave(&mut self) -> io::Result<()>;
     /// Apply a batch of changed cells.
     fn flush(&mut self, updates: &[CellUpdate]) -> io::Result<()>;
+    /// Set the system clipboard to `text` (OSC 52). Default is a no-op so
+    /// backends without a real terminal (or apps that never copy) don't pay
+    /// for the support; best-effort — the terminal emulator may ignore the
+    /// sequence.
+    fn copy_to_clipboard(&mut self, _text: &str) -> io::Result<()> {
+        Ok(())
+    }
 }
