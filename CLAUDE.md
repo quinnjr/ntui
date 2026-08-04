@@ -48,7 +48,11 @@ Key types and where they live:
 
 - `element.rs`/`component.rs` — `Element`/`Node` (host View/Text/Fragment/Provider or type-erased `Box<dyn AnyComponent>`). Components implement `Component` (usually via `#[component]`).
 - `fiber.rs` — retained `FiberTree` (HashMap arena, monotonic ids, never reused). Fibers own hook slots, children, layout Rect, `rendered_once`.
-- `hooks/` — one file per hook. `Hooks` is handed to component fns; hook identity is call order, enforced two ways: `next_slot` panics on growth after first render, `render_fiber` panics on shrink.
+- `hooks/` — one file per hook family (`input.rs` hosts the two input hooks, `use_input`
+  for keys and `use_paste` for bracketed paste — both backends enable bracketed paste on
+  enter and disable it on every exit path). `Hooks` is handed to component fns; hook
+  identity is call order, enforced two ways: `next_slot` panics on growth after first
+  render, `render_fiber` panics on shrink.
 - `runtime.rs` — `AppCore` (engine state machine, driver-agnostic) + `render()` (the real tokio select loop) + `RestoreGuard`/panic hook (terminal restore on every exit path).
 - `testing.rs` — public `TestTerminal`: drives `AppCore` by hand for deterministic tests. This is how virtually all integration-style tests work; no TTY needed.
 
@@ -65,7 +69,7 @@ Key types and where they live:
 
 - **The `mem::take` hooks pattern** (`reconciler::render_fiber`, `fiber::flush_effects`): hook slots are taken out of the fiber while user code runs, then restored. Don't "fix" the borrow structure with RefCells; a panic mid-render intentionally drops that fiber's slots (documented; app tears down via RestoreGuard).
 - **`layout_dirty` discipline**: `mount_element`/`unmount` set it; `reconcile_children` sets it only on pure reorder; `update_fiber` sets it only when host props actually changed. A no-op re-render must NOT set it (there's a test pinning this).
-- **Backend contract**: `enter()` must leave the screen cleared (first frame diffs against blank) and must be self-cleaning on partial failure (raw mode must not leak). See trait docs in `backend/mod.rs`.
+- **Backend contract**: `enter()` must leave the screen cleared (first frame diffs against blank) and must be self-cleaning on partial failure (raw mode must not leak). See trait docs in `backend/mod.rs`. Clipboard writes (`copy_to_clipboard`, OSC 52) are best-effort no-ops by default and must never take down the render loop on failure.
 - **`render()`'s future is `!Send`** (Rc in fibers) — examples use `#[tokio::main(flavor = "current_thread")]`. Hook-spawned tasks ARE Send and talk back only through `State<T>` handles (Arc<Mutex>, poison-recovering).
 - **Macro contracts**: `element!` resolves component props types by the `{Name}Props` naming convention and emits fully-qualified `::ntui::` paths; unsuffixed integer literal props are deliberately NOT wrapped in `Into::into` (inference falls back to i32 and breaks — see the comment in `ntui-macros/src/lib.rs`). `__`-prefixed identifiers are reserved inside `element!` expansions.
 - **`#[allow(dead_code)]` on `FiberTree::len`/`kind_name` is load-bearing**: they're used only from `#[cfg(test)]` code, and the lib target's dead-code lint fires without the allows (verified). Don't remove them on a lint crusade.

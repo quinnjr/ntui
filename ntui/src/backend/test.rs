@@ -7,6 +7,8 @@ use crate::buffer::{Buffer, CellUpdate};
 pub struct TestBackend {
     pub buffer: Buffer,
     pub lifecycle: Vec<&'static str>,
+    /// Clipboard payloads received via `copy_to_clipboard`, oldest first.
+    pub clipboard: Vec<String>,
 }
 
 impl TestBackend {
@@ -14,6 +16,7 @@ impl TestBackend {
         TestBackend {
             buffer: Buffer::new(width, height),
             lifecycle: Vec::new(),
+            clipboard: Vec::new(),
         }
     }
 
@@ -38,6 +41,11 @@ impl Backend for TestBackend {
         for u in updates {
             self.buffer.set(u.x, u.y, u.cell);
         }
+        Ok(())
+    }
+
+    fn copy_to_clipboard(&mut self, text: &str) -> io::Result<()> {
+        self.clipboard.push(text.to_string());
         Ok(())
     }
 }

@@ -20,6 +20,11 @@ pub(crate) trait InlineSink {
     fn commit(&mut self, rows: &[Vec<Cell>]) -> io::Result<()>;
     /// Redraw the live region in place below any committed content.
     fn present(&mut self, rows: &[Vec<Cell>]) -> io::Result<()>;
+    /// Set the system clipboard to `text` (OSC 52). Default no-op, mirroring
+    /// the `Backend` trait's method.
+    fn copy_to_clipboard(&mut self, _text: &str) -> io::Result<()> {
+        Ok(())
+    }
 }
 
 /// Inline terminal backend. Enables raw mode but does **not** switch to the
@@ -58,12 +63,22 @@ impl InlineSink for InlineBackend {
         terminal::enable_raw_mode()?;
         // Start the live region on a fresh line at column 0; no screen clear —
         // whatever is already in the terminal stays as scrollback above us.
-        execute!(self.out, cursor::Hide, cursor::MoveToColumn(0)).inspect_err(|_| {
+        execute!(
+            self.out,
+            cursor::Hide,
+            cursor::MoveToColumn(0),
+            crossterm::event::EnableBracketedPaste
+        )
+        .inspect_err(|_| {
             // Best-effort full restore on partial failure: cursor::Hide may
             // have landed before the error, so re-show it too — same
             // self-cleaning contract as FullscreenBackend::enter.
             let _ = terminal::disable_raw_mode();
-            let _ = execute!(self.out, cursor::Show);
+            let _ = execute!(
+                self.out,
+                cursor::Show,
+                crossterm::event::DisableBracketedPaste
+            );
         })
     }
 
@@ -74,6 +89,7 @@ impl InlineSink for InlineBackend {
             self.out,
             terminal::Clear(terminal::ClearType::FromCursorDown),
             cursor::Show,
+            crossterm::event::DisableBracketedPaste,
         )?;
         terminal::disable_raw_mode()
     }
@@ -126,6 +142,17 @@ impl InlineSink for InlineBackend {
             let _ = self.out.flush();
         }
         r
+    }
+
+    fn copy_to_clipboard(&mut self, text: &str) -> io::Result<()> {
+        // The live region's cursor invariant is untouched: OSC 52 produces
+        // no visible output and doesn't move the cursor.
+        write!(
+            self.out,
+            "{}",
+            crate::backend::ansi::osc52_copy_payload(text)
+        )?;
+        self.out.flush()
     }
 }
 

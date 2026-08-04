@@ -41,6 +41,40 @@ pub(crate) fn ct_attrs(a: Attrs) -> style::Attributes {
     attrs
 }
 
+/// Builds the OSC 52 escape sequence that asks the terminal emulator to set
+/// the system clipboard to `text` (base64 payload, as the spec requires).
+/// Best-effort by design: terminals that disable OSC 52 ignore it silently.
+pub(crate) fn osc52_copy_payload(text: &str) -> String {
+    format!("\x1b]52;c;{}\x07", base64_encode(text.as_bytes()))
+}
+
+/// RFC 4648 base64 (standard alphabet, with padding) — hand-rolled to keep
+/// the dependency list unchanged for one escape helper. Covered against the
+/// RFC's test vectors below.
+fn base64_encode(bytes: &[u8]) -> String {
+    const ALPHABET: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+    let mut out = String::with_capacity(bytes.len().div_ceil(3) * 4);
+    for chunk in bytes.chunks(3) {
+        let b0 = chunk[0] as u32;
+        let b1 = *chunk.get(1).unwrap_or(&0) as u32;
+        let b2 = *chunk.get(2).unwrap_or(&0) as u32;
+        let n = (b0 << 16) | (b1 << 8) | b2;
+        out.push(ALPHABET[(n >> 18) as usize & 0x3f] as char);
+        out.push(ALPHABET[(n >> 12) as usize & 0x3f] as char);
+        out.push(if chunk.len() > 1 {
+            ALPHABET[(n >> 6) as usize & 0x3f] as char
+        } else {
+            '='
+        });
+        out.push(if chunk.len() > 2 {
+            ALPHABET[n as usize & 0x3f] as char
+        } else {
+            '='
+        });
+    }
+    out
+}
+
 /// Write one styled cell at the current cursor position.
 ///
 /// Only used directly by tests now — `write_row` coalesces same-styled runs
@@ -202,5 +236,37 @@ mod tests {
         assert!(s.contains('h') && s.contains('i'));
         // trailing blanks trimmed → only two Print payloads
         assert_eq!(s.matches('h').count() + s.matches('i').count(), 2);
+    }
+
+    #[test]
+    fn base64_matches_rfc4648_vectors() {
+        let vectors: &[(&str, &str)] = &[
+            ("", ""),
+            ("f", "Zg=="),
+            ("fo", "Zm8="),
+            ("foo", "Zm9v"),
+            ("foob", "Zm9vYg=="),
+            ("fooba", "Zm9vYmE="),
+            ("foobar", "Zm9vYmFy"),
+        ];
+        for (input, expected) in vectors {
+            assert_eq!(
+                base64_encode(input.as_bytes()),
+                *expected,
+                "input {input:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn base64_handles_non_utf8_bytes() {
+        // Matches coreutils: `printf '\xff\xfe\xfd' | base64` → //79.
+        assert_eq!(base64_encode(&[0xff, 0xfe, 0xfd]), "//79");
+    }
+
+    #[test]
+    fn osc52_payload_wraps_base64_in_the_escape_sequence() {
+        assert_eq!(osc52_copy_payload("foo"), "\x1b]52;c;Zm9v\x07");
+        assert_eq!(osc52_copy_payload(""), "\x1b]52;c;\x07");
     }
 }

@@ -20,6 +20,7 @@ impl InputCtx {
 }
 
 pub(crate) type InputHandler = Rc<RefCell<dyn FnMut(KeyEvent, &mut InputCtx)>>;
+pub(crate) type PasteHandler = Rc<RefCell<dyn FnMut(&str, &mut InputCtx)>>;
 
 impl<'a> Hooks<'a> {
     /// The handler is replaced on every render so it always captures fresh state.
@@ -28,6 +29,22 @@ impl<'a> Hooks<'a> {
         let slot = self.next_slot(|| HookSlot::Input(h.clone()));
         let HookSlot::Input(existing) = slot else {
             self.hook_mismatch("use_input")
+        };
+        *existing = h;
+    }
+
+    /// Like [`Hooks::use_input`], but for bracketed-paste events: the pasted
+    /// text is delivered whole, once per paste, instead of as a burst of key
+    /// events (which is how a paste arrives on terminals without bracketed
+    /// paste — there each newline is indistinguishable from an Enter press).
+    /// Dispatch is deepest-first with the same bubbling/`stop_propagation`
+    /// semantics as keys. The handler is replaced on every render so it
+    /// always captures fresh state.
+    pub fn use_paste(&mut self, handler: impl FnMut(&str, &mut InputCtx) + 'static) {
+        let h: PasteHandler = Rc::new(RefCell::new(handler));
+        let slot = self.next_slot(|| HookSlot::Paste(h.clone()));
+        let HookSlot::Paste(existing) = slot else {
+            self.hook_mismatch("use_paste")
         };
         *existing = h;
     }
@@ -152,5 +169,118 @@ mod tests {
         t.tick().await.unwrap();
         t.send_key(KeyCode::Char('b')).unwrap();
         assert_eq!(*props.seen.lock(), vec![0, 42]); // handler slot was replaced, sees fresh value
+    }
+
+    struct PasteInner;
+    #[derive(Clone, PartialEq, Default)]
+    struct PasteInnerProps {
+        log: Shared<Vec<String>>,
+        stop: bool,
+    }
+    impl Component for PasteInner {
+        type Props = PasteInnerProps;
+        fn render(props: &PasteInnerProps, hooks: &mut Hooks) -> Element {
+            let log = props.log.clone();
+            let stop = props.stop;
+            hooks.use_paste(move |text, ctx| {
+                log.lock().push(format!("inner:{text}"));
+                if stop {
+                    ctx.stop_propagation();
+                }
+            });
+            Element::text(TextProps {
+                content: "inner".into(),
+                ..Default::default()
+            })
+        }
+    }
+
+    struct PasteOuter;
+    #[derive(Clone, PartialEq, Default)]
+    struct PasteOuterProps {
+        log: Shared<Vec<String>>,
+        stop_inner: bool,
+    }
+    impl Component for PasteOuter {
+        type Props = PasteOuterProps;
+        fn render(props: &PasteOuterProps, hooks: &mut Hooks) -> Element {
+            let log = props.log.clone();
+            hooks.use_paste(move |text, _| log.lock().push(format!("outer:{text}")));
+            Element::fragment(vec![Element::component::<PasteInner>(PasteInnerProps {
+                log: props.log.clone(),
+                stop: props.stop_inner,
+            })])
+        }
+    }
+
+    #[tokio::test]
+    async fn paste_deepest_handler_runs_first_then_bubbles() {
+        let log = Shared::default();
+        let mut t = TestTerminal::new(
+            10,
+            2,
+            Element::component::<PasteOuter>(PasteOuterProps {
+                log: log.clone(),
+                stop_inner: false,
+            }),
+        )
+        .unwrap();
+        t.send_paste("hello\npaste").unwrap();
+        assert_eq!(
+            *log.lock(),
+            vec!["inner:hello\npaste", "outer:hello\npaste"]
+        );
+    }
+
+    #[tokio::test]
+    async fn paste_stop_propagation_blocks_ancestors() {
+        let log = Shared::default();
+        let mut t = TestTerminal::new(
+            10,
+            2,
+            Element::component::<PasteOuter>(PasteOuterProps {
+                log: log.clone(),
+                stop_inner: true,
+            }),
+        )
+        .unwrap();
+        t.send_paste("x").unwrap();
+        assert_eq!(*log.lock(), vec!["inner:x"]);
+    }
+
+    struct PasteFresh;
+    #[derive(Clone, PartialEq, Default)]
+    struct PasteFreshProps {
+        seen: Shared<Vec<i32>>,
+        handle: Shared<Option<State<i32>>>,
+    }
+    impl Component for PasteFresh {
+        type Props = PasteFreshProps;
+        fn render(props: &PasteFreshProps, hooks: &mut Hooks) -> Element {
+            let n = hooks.use_state(|| 0);
+            *props.handle.lock() = Some(n.clone());
+            let cur = n.get();
+            let seen = props.seen.clone();
+            hooks.use_paste(move |_text, _| seen.lock().push(cur));
+            Element::text(TextProps {
+                content: cur.to_string(),
+                ..Default::default()
+            })
+        }
+    }
+
+    #[tokio::test]
+    async fn use_paste_handler_captures_fresh_state_after_rerender() {
+        let props = PasteFreshProps::default();
+        let mut t =
+            TestTerminal::new(10, 1, Element::component::<PasteFresh>(props.clone())).unwrap();
+
+        t.send_paste("a").unwrap();
+        assert_eq!(*props.seen.lock(), vec![0]);
+
+        props.handle.lock().clone().unwrap().set(42);
+        t.tick().await.unwrap();
+        t.send_paste("b").unwrap();
+        assert_eq!(*props.seen.lock(), vec![0, 42]);
     }
 }

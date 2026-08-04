@@ -65,6 +65,25 @@ hooks.use_input(move |ev, ctx| match ev.code {
 });
 ```
 
+## `use_paste`
+
+```rust
+fn use_paste(&mut self, handler: impl FnMut(&str, &mut InputCtx) + 'static)
+```
+
+Registers a handler for bracketed-paste events (both `render` and
+`render_inline` enable bracketed paste on enter). The pasted text arrives
+whole, once per paste — unlike a paste on a terminal without bracketed
+paste, which arrives as a burst of key events where each newline is
+indistinguishable from an Enter press. Same deepest-first dispatch and
+`stop_propagation()` semantics as `use_input`.
+
+```rust
+hooks.use_paste(move |text, _ctx| {
+    input.update(|b| b.push_str(&text.replace('\n', " ")));
+});
+```
+
 ## `use_future` / `use_stream`
 
 ```rust
@@ -216,6 +235,11 @@ fn use_app(&mut self) -> AppHandle
 `AppHandle::exit()` stops the render loop and returns from `render`/`render_inline`.
 `AppHandle::redraw()` requests a redraw without changing any state (rarely
 needed — state changes already trigger redraws).
+`AppHandle::copy_to_clipboard(text)` asks the backend to set the system
+clipboard via an OSC 52 sequence on the next frame — best-effort, since the
+terminal emulator may ignore or gate it (tmux and some terminals require
+opt-in). Note this is *programmatic* copy; mouse selection already works
+without it because ntui never captures the mouse.
 
 ## Testing hooks
 
