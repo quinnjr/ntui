@@ -164,9 +164,9 @@ fn paint_fiber(
                     .is_some()
                     .then(|| line.chars().count().max(1));
                 for (dx, ch) in line.chars().take(r.width as usize).enumerate() {
-                    // Sanitize application-supplied control characters (ESC, BEL,
-                    // C0/C1, DEL) to prevent terminal escape-sequence injection.
-                    let ch = if ch.is_control() { ' ' } else { ch };
+                    // Application-supplied text is never trusted to control the
+                    // display; see `is_display_hazard`.
+                    let ch = if is_display_hazard(ch) { ' ' } else { ch };
                     let (x, y) = (ox + dx as i32, oy + dy as i32);
                     // keep the background an ancestor View already painted
                     let bg = if x >= 0
@@ -224,6 +224,51 @@ fn gradient_t(dx: i32, dy: i32, w: u16, h: u16, dir: GradientDirection) -> f32 {
 }
 
 /// [horizontal, vertical, top-left, top-right, bottom-left, bottom-right]
+/// Whether `ch` would change how the characters *around* it are displayed.
+///
+/// Text painted here is application-supplied and frequently not written by
+/// the person reading it — a process name, a filename, a commit message, a
+/// row from someone else's database. It is data, so it may describe itself
+/// but must not be able to redraw its neighbours. Three classes can:
+///
+/// * **Control characters.** ESC, BEL, C0/C1 and DEL — an escape sequence
+///   assembled out of `content` can retitle the window, move the cursor
+///   anywhere, or emit a clipboard write. [`char::is_control`] covers these.
+/// * **Bidirectional overrides.** `U+202E` and its relatives reorder the
+///   glyphs that follow, so `evil\u{202E}gnp.exe` presents as `evilexe.png`.
+///   Nothing above this layer can defend against it, because the string
+///   really does contain what it claims to.
+/// * **Zero-width and invisible formatting.** `U+200B`, `U+200D`, `U+FEFF`,
+///   soft hyphen and friends draw nothing, but this renderer assigns one
+///   cell per [`char`] — so each one silently shifts the rest of the line
+///   out of its column. That makes them a layout bug as much as a spoofing
+///   vector.
+///
+/// Hazards are replaced with a space rather than removed: dropping them
+/// would shorten the line after the layout pass has already measured it,
+/// moving every glyph that follows. A space keeps every column where the
+/// component decided it goes, and makes the tampering visible as a gap
+/// instead of silently rendering something else.
+///
+/// This is deliberately a fixed list rather than a Unicode general-category
+/// lookup, which would mean a dependency and a table for a set that changes
+/// about once a decade.
+fn is_display_hazard(ch: char) -> bool {
+    ch.is_control()
+        || matches!(
+            ch,
+            '\u{00AD}'                 // soft hyphen
+                | '\u{061C}'           // Arabic letter mark
+                | '\u{180E}'           // Mongolian vowel separator
+                | '\u{200B}'..='\u{200F}'  // ZWSP, ZWNJ, ZWJ, LRM, RLM
+                | '\u{202A}'..='\u{202E}'  // bidi embeddings and overrides
+                | '\u{2060}'..='\u{2064}'  // word joiner, invisible operators
+                | '\u{2066}'..='\u{2069}'  // bidi isolates
+                | '\u{FEFF}'           // zero-width no-break space (BOM)
+                | '\u{FFF9}'..='\u{FFFB}' // interlinear annotation
+        )
+}
+
 fn border_chars(style: BorderStyle) -> [char; 6] {
     match style {
         BorderStyle::Single => ['─', '│', '┌', '┐', '└', '┘'],
@@ -375,6 +420,96 @@ mod tests {
         let mut buf = Buffer::new(3, 3);
         paint(&tree, &mut buf);
         assert_eq!(buf.get(1, 1).bg, Color::Blue);
+    }
+
+    /// Paint `content` into a `w`x`h` buffer and return it.
+    fn painted(content: &str, w: u16, h: u16) -> Buffer {
+        let (rt, _rx) = RuntimeHandle::test_handle();
+        let mut tree = FiberTree::new();
+        tree.mount_root(
+            Element::text(TextProps {
+                content: content.into(),
+                ..Default::default()
+            }),
+            &rt,
+        );
+        compute_layout(&mut tree, w, h);
+        let mut buf = Buffer::new(w, h);
+        paint(&tree, &mut buf);
+        buf
+    }
+
+    #[test]
+    fn a_bidi_override_cannot_disguise_the_text_around_it() {
+        // U+202E reverses everything after it, so this string presents as
+        // "evilexe.png" in any terminal that honours it — a process naming
+        // itself this way lies about what it is in every view that shows a
+        // name. The bytes are honest; the display is not.
+        let buf = painted("evil\u{202E}gnp.exe", 20, 1);
+        let out = buf.to_text();
+
+        assert!(
+            !out.contains('\u{202E}'),
+            "the override reached the terminal: {out:?}"
+        );
+        assert!(
+            out.contains("evil") && out.contains("gnp.exe"),
+            "the real name should still be readable: {out:?}"
+        );
+    }
+
+    #[test]
+    fn zero_width_characters_do_not_shift_the_columns_after_them() {
+        // One cell per `char` here, so a zero-width character still takes a
+        // column. Left alone it pushes everything after it one place right,
+        // which is a layout bug before it is a spoofing one.
+        let plain = painted("abcdef", 10, 1);
+        let sneaky = painted("abc\u{200B}def", 10, 1);
+
+        for x in 0..3 {
+            assert_eq!(plain.get(x, 0).ch, sneaky.get(x, 0).ch, "column {x}");
+        }
+        assert_eq!(sneaky.get(3, 0).ch, ' ', "the zero-width char became a gap");
+        for (x, ch) in "def".chars().enumerate() {
+            assert_eq!(sneaky.get(4 + x as u16, 0).ch, ch, "column {}", 4 + x);
+        }
+    }
+
+    #[test]
+    fn every_known_display_hazard_is_neutralised() {
+        for hazard in [
+            '\u{0000}', '\u{001B}', '\u{007F}', '\u{009B}', // controls
+            '\u{00AD}', '\u{061C}', '\u{180E}', // invisible formatting
+            '\u{200B}', '\u{200D}', '\u{200F}', // zero-width, marks
+            '\u{202A}', '\u{202E}', // bidi embedding and override
+            '\u{2060}', '\u{2069}', '\u{FEFF}', '\u{FFFA}',
+        ] {
+            let buf = painted(&format!("a{hazard}b"), 8, 1);
+            assert_eq!(
+                buf.get(1, 0).ch,
+                ' ',
+                "U+{:04X} survived painting",
+                hazard as u32
+            );
+            assert_eq!(buf.get(0, 0).ch, 'a');
+            assert_eq!(
+                buf.get(2, 0).ch,
+                'b',
+                "U+{:04X} shifted the line",
+                hazard as u32
+            );
+        }
+    }
+
+    #[test]
+    fn ordinary_text_is_left_alone() {
+        // The predicate must not reach beyond the hazards: accented Latin,
+        // CJK, emoji and legitimate right-to-left script all render as
+        // themselves.
+        for ch in ['é', '中', '\u{05D0}', '→', '✓'] {
+            let buf = painted(&format!("a{ch}b"), 8, 1);
+            assert_eq!(buf.get(1, 0).ch, ch, "U+{:04X} was mangled", ch as u32);
+        }
     }
 
     #[test]
