@@ -4,6 +4,8 @@ pub mod app;
 pub mod context;
 pub mod effect;
 pub mod input;
+pub mod list;
+pub mod memo;
 pub mod scroll;
 pub mod scrollback;
 pub mod state;
@@ -15,6 +17,7 @@ pub(crate) enum HookSlot {
     Effect(effect::EffectSlot),
     Input(input::InputHandler),
     Paste(input::PasteHandler),
+    Memo(memo::MemoSlot),
     Task(tokio::task::JoinHandle<()>),
 }
 
@@ -30,6 +33,7 @@ impl HookSlot {
             }
             HookSlot::Input(_) => {}
             HookSlot::Paste(_) => {}
+            HookSlot::Memo(_) => {}
             HookSlot::Task(handle) => handle.abort(),
         }
     }
@@ -274,6 +278,40 @@ mod tests {
                     hooks.use_state(|| 0i32);
                 } else {
                     hooks.use_state(String::new);
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "use_memo deps type changed")]
+    fn use_memo_deps_type_change_panics() {
+        drive(
+            |phase, hooks| {
+                if *phase.lock() == 0 {
+                    hooks.use_memo(0i32, || 1u8);
+                } else {
+                    hooks.use_memo(String::new(), || 1u8);
+                }
+                Element::view(ViewProps::default(), vec![])
+            },
+            Shared::default(),
+        );
+    }
+
+    #[test]
+    #[should_panic(expected = "use_memo value type changed")]
+    fn use_memo_value_type_change_panics() {
+        drive(
+            |phase, hooks| {
+                // Deps stay equal, so the recompute is skipped and the slot
+                // still holds the old value type.
+                if *phase.lock() == 0 {
+                    hooks.use_memo(0u8, || 1i32);
+                } else {
+                    hooks.use_memo(0u8, String::new);
                 }
                 Element::view(ViewProps::default(), vec![])
             },

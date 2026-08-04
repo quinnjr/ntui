@@ -191,6 +191,59 @@ fn use_terminal_size(&mut self) -> (u16, u16)
 
 Reactive `(columns, rows)`; the component re-renders on terminal resize.
 
+## `use_memo`
+
+```rust
+fn use_memo<D, T>(&mut self, deps: D, f: impl FnOnce() -> T) -> T
+where D: PartialEq + 'static, T: Clone + 'static
+```
+
+Computes `f` on the first render and again only when `deps` change.
+
+A component re-renders for many reasons — a keystroke, a parent's state
+change, a resize — and most of them do not affect any given derived value.
+Without a memo, work proportional to the *input* runs on every one of those
+renders even when the input has not moved.
+
+Keep `deps` small: the point is to spend a cheap comparison instead of an
+expensive recompute. For a large shared payload, depend on its identity
+rather than its contents by wrapping it in [`Shared`](#shared) — and note
+that a `Shared` left at its `Default` allocates a fresh pointer each render,
+which defeats the comparison.
+
+The value is cloned out on every render, so `T` should be cheap to clone.
+Calling the hook with a different `D` or `T` at the same slot panics with
+the component's name, like every other hook's order check.
+
+```rust
+let matches = hooks.use_memo(
+    (props.rows.clone(), props.query.clone()),
+    || Shared::new(filter(&props.rows, &props.query)),
+);
+```
+
+## `use_list_selection`
+
+```rust
+fn use_list_selection(&mut self) -> State<ListSelection>
+```
+
+A cursor and viewport over a list, persisted across renders.
+
+`ListSelection` is plain data — `index` and `offset` — with `move_by`,
+`to_start`, `to_end`, `clamp`, and `visible`. Length and viewport height are
+passed per call rather than stored, because both change independently of the
+selection: the list is refreshed from elsewhere and the height follows the
+terminal.
+
+`clamp` is the one to remember. Lists refreshed from outside routinely shrink
+under a cursor that was valid a moment ago; without it the cursor points past
+the end and the viewport scrolls to blank space.
+
+`visible` returns the range to render — slice with it *before* building any
+row, so a frame costs what is on screen rather than what is in the list. It
+pairs with `TableProps::viewport`.
+
 ## `use_scroll`
 
 ```rust
