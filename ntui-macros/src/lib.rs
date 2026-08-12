@@ -88,8 +88,15 @@ impl Parse for ElementNode {
             syn::parenthesized!(content in input);
             while !content.is_empty() {
                 let pname: syn::Ident = content.parse()?;
-                content.parse::<syn::Token![:]>()?;
-                let expr: syn::Expr = content.parse()?;
+                // Field shorthand, mirroring struct-init: `List(n)` means
+                // `List(n: n)`. rustfmt normalizes struct-literal-shaped
+                // macro bodies toward shorthand, so the macro must accept it.
+                let expr: syn::Expr = if content.peek(syn::Token![:]) {
+                    content.parse::<syn::Token![:]>()?;
+                    content.parse()?
+                } else {
+                    syn::parse_quote!(#pname)
+                };
                 if pname == "key" {
                     key = Some(expr);
                 } else {

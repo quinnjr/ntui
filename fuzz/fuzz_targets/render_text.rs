@@ -22,7 +22,7 @@ fn Show(props: &ShowProps, _hooks: &mut ntui::Hooks) -> ntui::Element {
 fuzz_target!(|input: (String, u8, u8)| {
     let (text, w, h) = input;
     let (w, h) = ((w as u16).max(1), (h as u16).max(1));
-    let term = TestTerminal::new(w, h, element!(Show(text: text))).unwrap();
+    let term = TestTerminal::new(w, h, element!(Show(text))).unwrap();
     // `frame_text` joins rows with '\n'; check each row's cells individually.
     for row in term.frame_text().split('\n') {
         for ch in row.chars() {

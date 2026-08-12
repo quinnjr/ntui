@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::time::{Duration, Instant};
 
 use crossterm::event::{Event, EventStream};
-use futures::{FutureExt, StreamExt};
+use futures::StreamExt;
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use crate::backend::inline::{InlineSink, buffer_rows};
@@ -365,14 +365,17 @@ async fn run_loop<B: Backend>(el: Element, guard: RestoreGuard<'_, B>) -> Result
             },
         }
         // Drain any input burst (paste, key repeat) before the frame; bounded so wakes can't starve.
+        // Polled via `futures::poll!` (real task waker), NOT `now_or_never()`: the latter polls
+        // with a no-op waker that `EventStream` then holds, so the wakeup for the next real key
+        // is lost and input goes dead after the first drained frame.
         for _ in 0..MAX_EVENT_BURST {
-            match events.next().now_or_never() {
-                Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
-                Some(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
-                Some(Some(Ok(Event::Resize(w, h)))) => core.resize(w, h),
-                Some(Some(Ok(_))) => {}
-                Some(Some(Err(e))) => return Err(e.into()),
-                Some(None) | None => break,
+            match futures::poll!(events.next()) {
+                std::task::Poll::Ready(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                std::task::Poll::Ready(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
+                std::task::Poll::Ready(Some(Ok(Event::Resize(w, h)))) => core.resize(w, h),
+                std::task::Poll::Ready(Some(Ok(_))) => {}
+                std::task::Poll::Ready(Some(Err(e))) => return Err(e.into()),
+                std::task::Poll::Ready(None) | std::task::Poll::Pending => break,
             }
         }
         core.process_wakes();
@@ -482,14 +485,15 @@ async fn run_inline_loop<S: InlineSink>(
                 None => break,
             },
         }
+        // See run_loop: poll with the real task waker, not now_or_never()'s no-op waker.
         for _ in 0..MAX_EVENT_BURST {
-            match events.next().now_or_never() {
-                Some(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
-                Some(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
-                Some(Some(Ok(Event::Resize(nw, nh)))) => core.resize(nw, nh),
-                Some(Some(Ok(_))) => {}
-                Some(Some(Err(e))) => return Err(e.into()),
-                Some(None) | None => break,
+            match futures::poll!(events.next()) {
+                std::task::Poll::Ready(Some(Ok(Event::Key(k)))) => core.dispatch_key(k),
+                std::task::Poll::Ready(Some(Ok(Event::Paste(s)))) => core.dispatch_paste(&s),
+                std::task::Poll::Ready(Some(Ok(Event::Resize(nw, nh)))) => core.resize(nw, nh),
+                std::task::Poll::Ready(Some(Ok(_))) => {}
+                std::task::Poll::Ready(Some(Err(e))) => return Err(e.into()),
+                std::task::Poll::Ready(None) | std::task::Poll::Pending => break,
             }
         }
         core.process_wakes();
