@@ -141,7 +141,7 @@ fn bench_mount(c: &mut Criterion) {
     for &n in &[50usize, 200, 500] {
         g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
             b.iter(|| {
-                let t = TestTerminal::new(80, 50, element!(List(n: n))).unwrap();
+                let t = TestTerminal::new(80, 50, element!(List(n))).unwrap();
                 black_box(t.frame_text());
             });
         });
@@ -153,7 +153,7 @@ fn bench_frame_reorder(c: &mut Criterion) {
     let mut g = c.benchmark_group("frame_reorder");
     for &n in &[50usize, 200, 500] {
         g.bench_with_input(BenchmarkId::from_parameter(n), &n, |b, &n| {
-            let mut t = TestTerminal::new(80, 50, element!(List(n: n))).unwrap();
+            let mut t = TestTerminal::new(80, 50, element!(List(n))).unwrap();
             b.iter(|| {
                 t.send_key(KeyCode::Char('r')).unwrap();
                 black_box(t.frame_text());
