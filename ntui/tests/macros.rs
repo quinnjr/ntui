@@ -49,3 +49,18 @@ fn bare_component_form_works_as_render_root() {
     let el = element!(NoProps);
     assert!(matches!(el.node, Node::Component(_)));
 }
+
+#[test]
+fn prop_field_shorthand_matches_explicit_form() {
+    // `Badge(label)` must mean `Badge(label: label)` — rustfmt normalizes
+    // struct-literal-shaped macro bodies toward shorthand, so the macro
+    // has to accept what rustfmt writes.
+    let label = String::from("hello");
+    let shorthand = element!(Badge(label));
+    let label = String::from("hello");
+    let explicit = element!(Badge(label: label));
+    let (Node::Component(a), Node::Component(b)) = (&shorthand.node, &explicit.node) else {
+        panic!("expected components")
+    };
+    assert!(a.props_eq(b.as_ref()));
+}
