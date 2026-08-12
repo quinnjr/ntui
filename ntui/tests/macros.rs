@@ -51,6 +51,7 @@ fn bare_component_form_works_as_render_root() {
 }
 
 #[test]
+#[rustfmt::skip] // rustfmt would rewrite the explicit form into shorthand, gutting the comparison
 fn prop_field_shorthand_matches_explicit_form() {
     // `Badge(label)` must mean `Badge(label: label)` — rustfmt normalizes
     // struct-literal-shaped macro bodies toward shorthand, so the macro
